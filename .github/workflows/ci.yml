@@ -30,14 +30,14 @@ jobs:
         uses: gradle/actions/setup-gradle@v5
 
       - name: Build and Test
-        run: ./gradlew build --configuration-cache
+        run: ./gradlew build --no-daemon --stacktrace
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: test-results
-          path: build/reports/tests/
+          path: '**/build/reports/tests/'
 
   publish-snapshots:
     name: Publish Snapshots
@@ -65,10 +65,10 @@ jobs:
           MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
-        run: ./gradlew publishAllPublicationsToCentralPortalSnapshots --no-daemon --configuration-cache --stacktrace
+        run: ./gradlew publishAllPublicationsToCentralPortalSnapshots --no-daemon --stacktrace
 
       - name: Publish Snapshots to GitHub Packages
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./gradlew publishAllPublicationsToGitHubPackagesRepository --no-daemon --configuration-cache
+        run: ./gradlew publishAllPublicationsToGitHubPackagesRepository --no-daemon
