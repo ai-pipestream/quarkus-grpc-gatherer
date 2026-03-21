@@ -1,0 +1,106 @@
+plugins {
+    id 'base'
+    id 'maven-publish'
+    id 'signing'
+    id 'com.gradleup.nmcp' version '1.4.4'
+    id 'io.quarkus.extension' version '3.32.4' apply false
+    id 'io.quarkus' version '3.32.4' apply false
+}
+
+allprojects {
+    group = 'ai.pipestream'
+    version = '0.1.0-SNAPSHOT'
+}
+
+subprojects {
+    apply plugin: 'java-library'
+    apply plugin: 'maven-publish'
+    apply plugin: 'signing'
+
+    java {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(21)
+        }
+        if (project.name != 'integration-tests') {
+            withSourcesJar()
+            withJavadocJar()
+        }
+    }
+
+    repositories {
+        mavenCentral()
+    }
+
+    tasks.withType(Test).configureEach {
+        useJUnitPlatform()
+    }
+
+    if (project.name != 'integration-tests') {
+        publishing {
+            publications {
+                mavenJava(MavenPublication) {
+                    from components.java
+                    pom {
+                        name = "quarkus-grpc-gatherer (${project.name})"
+                        description = 'Quarkus extension that gathers protobuf sources before grpc-zero code generation'
+                        url = 'https://github.com/ai-pipestream/quarkus-grpc-gatherer'
+                        licenses {
+                            license {
+                                name = 'MIT License'
+                                url = 'https://opensource.org/licenses/MIT'
+                            }
+                        }
+                        developers {
+                            developer {
+                                id = 'krickert'
+                                name = 'Kristian Rickert'
+                            }
+                        }
+                        scm {
+                            connection = 'scm:git:https://github.com/ai-pipestream/quarkus-grpc-gatherer.git'
+                            developerConnection = 'scm:git:ssh://git@github.com/ai-pipestream/quarkus-grpc-gatherer.git'
+                            url = 'https://github.com/ai-pipestream/quarkus-grpc-gatherer'
+                        }
+                    }
+                }
+            }
+            repositories {
+                maven {
+                    name = 'GitHubPackages'
+                    url = uri("https://maven.pkg.github.com/${System.getenv('GITHUB_REPOSITORY') ?: 'ai-pipestream/quarkus-grpc-gatherer'}")
+                    credentials {
+                        username = System.getenv('GITHUB_ACTOR') ?: (project.findProperty('gpr.user') ?: '')
+                        password = System.getenv('GITHUB_TOKEN') ?: (project.findProperty('gpr.key') ?: '')
+                    }
+                }
+            }
+        }
+
+        signing {
+            def signingKey = System.getenv('GPG_PRIVATE_KEY')
+            def signingPassword = System.getenv('GPG_PASSPHRASE')
+            required { signingKey != null && !signingKey.isBlank() }
+            if (signingKey && signingPassword) {
+                useInMemoryPgpKeys(signingKey, signingPassword)
+                sign publishing.publications
+            }
+        }
+    }
+}
+
+nmcp {
+    publishAllPublicationsToCentralPortal {
+        username = providers.environmentVariable('MAVEN_CENTRAL_USERNAME')
+        password = providers.environmentVariable('MAVEN_CENTRAL_PASSWORD')
+        publishingType = 'AUTOMATIC'
+    }
+}
+
+tasks.register('currentVersion') {
+    group = 'help'
+    description = 'Prints the current project version'
+    def resolvedVersion = rootProject.version.toString()
+    doLast {
+        println(resolvedVersion)
+    }
+}

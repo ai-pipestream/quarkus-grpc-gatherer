@@ -1,0 +1,11 @@
+name: Quarkus gRPC Gatherer
+description: Gather .proto files from filesystem, jars, git, and Buf before gRPC codegen.
+metadata:
+  keywords:
+    - grpc
+    - protobuf
+    - codegen
+    - gather
+  categories:
+    - grpc
+  status: preview

@@ -1,0 +1,8 @@
+rootProject.name = 'quarkus-grpc-gatherer-parent'
+
+include 'quarkus-grpc-gatherer'
+include 'quarkus-grpc-gatherer-deployment'
+include 'integration-tests'
+
+project(':quarkus-grpc-gatherer').projectDir = file('runtime')
+project(':quarkus-grpc-gatherer-deployment').projectDir = file('deployment')
