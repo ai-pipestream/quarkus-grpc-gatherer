@@ -7,7 +7,7 @@ base {
 }
 
 quarkusExtension {
-    deploymentModule = 'quarkus-grpc-gatherer-deployment'
+    deploymentModule = ":quarkus-grpc-gatherer-deployment"
 }
 
 dependencies {

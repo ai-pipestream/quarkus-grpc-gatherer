@@ -68,12 +68,15 @@ quarkus.grpc-gather.jar-dependencies=com.google.api.grpc:proto-google-common-pro
 
 ## Descriptor generation (grpc-zero)
 
-Use grpc-zero settings to emit descriptor sets:
+When `enabled=true`, the gatherer automatically configures `quarkus.generate-code.grpc.proto-directory` to point to its gathered outputs, making it "just work" with `grpc-zero`.
+
+Optional descriptor sets can also be automatically configured:
 
 ```properties
 quarkus.generate-code.grpc.descriptor-set.generate=true
-quarkus.generate-code.grpc.descriptor-set.output-dir=${user.dir}/build/grpc-descriptors
-quarkus.generate-code.grpc.descriptor-set.name=services.dsc
+# Optional: override automatic defaults
+# quarkus.generate-code.grpc.descriptor-set.output-dir=${user.dir}/build/grpc-descriptors
+# quarkus.generate-code.grpc.descriptor-set.name=services.dsc
 ```
 
 ## Build

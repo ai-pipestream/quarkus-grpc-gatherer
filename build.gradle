@@ -2,14 +2,29 @@ plugins {
     id 'base'
     id 'maven-publish'
     id 'signing'
-    id 'com.gradleup.nmcp' version '1.4.4'
-    id 'io.quarkus.extension' version '3.32.4' apply false
-    id 'io.quarkus' version '3.32.4' apply false
+    id 'pl.allegro.tech.build.axion-release' version '1.21.1'
+    id 'com.gradleup.nmcp.aggregation' version '1.4.4'
+    id 'io.quarkus.extension' version '3.34.2' apply false
+    id 'io.quarkus' version '3.34.2' apply false
+}
+
+// Axion-release configuration
+scmVersion {
+    tag {
+        prefix = 'v'
+        initialVersion { config, position -> '0.1.0' }
+    }
+    checks {
+        uncommittedChanges = false
+        aheadOfRemote = false
+        // Disabled due to Quarkus configuration resolution issues
+        snapshotDependencies = false
+    }
 }
 
 allprojects {
     group = 'ai.pipestream'
-    version = '0.1.0-SNAPSHOT'
+    version = scmVersion.version
 }
 
 subprojects {
@@ -28,6 +43,7 @@ subprojects {
     }
 
     repositories {
+        mavenLocal()
         mavenCentral()
     }
 
@@ -64,16 +80,16 @@ subprojects {
                     }
                 }
             }
-            repositories {
-                maven {
-                    name = 'GitHubPackages'
-                    url = uri("https://maven.pkg.github.com/${System.getenv('GITHUB_REPOSITORY') ?: 'ai-pipestream/quarkus-grpc-gatherer'}")
-                    credentials {
-                        username = System.getenv('GITHUB_ACTOR') ?: (project.findProperty('gpr.user') ?: '')
-                        password = System.getenv('GITHUB_TOKEN') ?: (project.findProperty('gpr.key') ?: '')
+                    repositories {
+                        maven {
+                            name = 'GitHubPackages'
+                            url = uri("https://maven.pkg.github.com/${System.getenv('GITHUB_REPOSITORY') ?: 'ai-pipestream/quarkus-grpc-gatherer'}")
+                            credentials {
+                                username = findProperty('gpr.user') ?: System.getenv('GITHUB_ACTOR')
+                                password = findProperty('gpr.key') ?: System.getenv('GITHUB_TOKEN')
+                            }
+                        }
                     }
-                }
-            }
         }
 
         signing {
@@ -88,19 +104,14 @@ subprojects {
     }
 }
 
-nmcp {
-    publishAllPublicationsToCentralPortal {
-        username = providers.environmentVariable('MAVEN_CENTRAL_USERNAME')
-        password = providers.environmentVariable('MAVEN_CENTRAL_PASSWORD')
+nmcpAggregation {
+    publishAllProjectsProbablyBreakingProjectIsolation()
+
+    centralPortal {
+        username = findProperty('mavenCentralUsername') ?: System.getenv('MAVEN_CENTRAL_USERNAME')
+        password = findProperty('mavenCentralPassword') ?: System.getenv('MAVEN_CENTRAL_PASSWORD')
         publishingType = 'AUTOMATIC'
+        baseUrl = 'https://central.sonatype.com/'
     }
 }
 
-tasks.register('currentVersion') {
-    group = 'help'
-    description = 'Prints the current project version'
-    def resolvedVersion = rootProject.version.toString()
-    doLast {
-        println(resolvedVersion)
-    }
-}

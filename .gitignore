@@ -21,3 +21,15 @@ gradle-app.setting
 .project
 # JDT-specific (Eclipse Java Development Tools)
 .classpath
+
+# Local logs
+*.txt
+
+# Agent session artifacts
+.junie/
+
+# Integration test artifacts
+integration-tests/gathered-protos/
+integration-tests/grpc-descriptors/
+integration-tests/proto-sources/
+integration-tests/proto/
