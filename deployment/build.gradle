@@ -3,7 +3,7 @@ base {
 }
 
 dependencies {
-    implementation platform('io.quarkus.platform:quarkus-bom:3.32.4')
+    implementation platform('io.quarkus.platform:quarkus-bom:3.34.3')
     implementation project(':quarkus-grpc-gatherer')
     implementation 'io.quarkus:quarkus-core-deployment'
     implementation 'io.quarkus:quarkus-arc-deployment'
@@ -11,3 +11,4 @@ dependencies {
     implementation 'org.eclipse.jgit:org.eclipse.jgit:7.1.0.202411261347-r'
     testImplementation 'org.junit.jupiter:junit-jupiter:5.13.4'
 }
+

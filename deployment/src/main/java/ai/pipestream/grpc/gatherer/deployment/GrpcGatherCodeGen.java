@@ -45,7 +45,6 @@ import io.quarkus.runtime.util.HashUtil;
  * <li>Local filesystem directories</li>
  * <li>Project runtime dependencies (JARs)</li>
  * <li>External Git repositories</li>
- * <li>Buf modules (using {@code buf export})</li>
  * <li>Google Well-Known Types (from {@code protobuf-java})</li>
  * </ul>
  * <p>
@@ -53,6 +52,12 @@ import io.quarkus.runtime.util.HashUtil;
  * its outputs are available for other code generators like {@code grpc-zero}.
  */
 public class GrpcGatherCodeGen implements CodeGenProvider {
+
+    /**
+     * Creates a new {@code GrpcGatherCodeGen} instance.
+     */
+    public GrpcGatherCodeGen() {
+    }
 
     private static final Logger LOG = Logger.getLogger(GrpcGatherCodeGen.class);
 
@@ -68,8 +73,6 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
     private static final String GIT_USERNAME = "quarkus.grpc-gather.git-username";
     private static final String GIT_PASSWORD = "quarkus.grpc-gather.git-password";
     private static final String GIT_TOKEN = "quarkus.grpc-gather.git-token";
-    private static final String BUF_MODULE = "quarkus.grpc-gather.buf-module";
-    private static final String BUF_PATHS = "quarkus.grpc-gather.buf-paths";
     private static final String INCLUDE_GOOGLE_WKT = "quarkus.grpc-gather.include-google-wkt";
 
     private static final String GATHERED_PROTOS_DIR = "gathered-protos";
@@ -97,7 +100,19 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
         // Since provider IDs are sorted, 'a-grpc-gather' runs before 'grpc'.
         try {
             Path classesDir = model.getAppArtifact().getResolvedPaths().getSinglePath();
-            Path buildDir = classesDir.getParent().getParent().getParent();
+            Path buildDir = null;
+            Path current = classesDir;
+            while (current != null) {
+                String name = current.getFileName().toString();
+                if ("build".equals(name) || "target".equals(name)) {
+                    buildDir = current;
+                    break;
+                }
+                current = current.getParent();
+            }
+            if (buildDir == null) {
+                buildDir = classesDir.getParent().getParent().getParent();
+            }
             String mergeDirAbs = buildDir.resolve(PROTO_SOURCES_DIR).toAbsolutePath().toString();
 
             // Inject into the properties map used by some providers in their init()
@@ -144,7 +159,6 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
         gathered += gatherFilesystem(config, stagedRoot, new HashMap<>());
         gathered += gatherFromJars(context, config, stagedRoot.resolve("jar"), new HashMap<>());
         gathered += gatherFromGit(config, stagedRoot.resolve("git"), new HashMap<>());
-        gathered += gatherFromBuf(config, stagedRoot.resolve("buf"), new HashMap<>());
         gathered += gatherGoogleWkt(context, config, stagedRoot.resolve("google"), new HashMap<>());
 
             // Merge each gathered source into the final mergeDir
@@ -185,8 +199,21 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
      * @return the build directory path
      */
     private Path getBuildDir(CodeGenContext context) {
+        // Prefer context.workDir() which in Gradle points to build/ and in Maven to target/
+        if (context.workDir() != null) {
+            return context.workDir();
+        }
         try {
             Path classesDir = context.applicationModel().getAppArtifact().getResolvedPaths().getSinglePath();
+            // Try to find 'build' or 'target' by going up
+            Path current = classesDir;
+            while (current != null) {
+                String name = current.getFileName().toString();
+                if ("build".equals(name) || "target".equals(name)) {
+                    return current;
+                }
+                current = current.getParent();
+            }
             // build/classes/java/main -> build
             return classesDir.getParent().getParent().getParent();
         } catch (Exception e) {
@@ -195,6 +222,12 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
         }
     }
 
+    /**
+     * Returns the merged proto sources directory.
+     *
+     * @param context the code generation context
+     * @return the directory where all gathered and merged protos are materialized
+     */
     public Path getMergeDir(CodeGenContext context) {
         // This tells where we materialized the merged protos.
         return getBuildDir(context).resolve(PROTO_SOURCES_DIR);
@@ -217,7 +250,6 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
                 || config.getOptionalValue(JAR_DEPS, String.class).filter(s -> !s.isBlank()).isPresent()
                 || config.getOptionalValue(JAR_SCAN_ALL, Boolean.class).orElse(false)
                 || config.getOptionalValue(GIT_REPO, String.class).filter(s -> !s.isBlank()).isPresent()
-                || config.getOptionalValue(BUF_MODULE, String.class).filter(s -> !s.isBlank()).isPresent()
                 || config.getOptionalValue(INCLUDE_GOOGLE_WKT, Boolean.class).orElse(false);
     }
 
@@ -434,51 +466,6 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
         }
         String password = config.getOptionalValue(GIT_PASSWORD, String.class).orElse("");
         return new UsernamePasswordCredentialsProvider(username, password);
-    }
-
-    /**
-     * Gathers {@code .proto} files from a Buf module using {@code buf export}.
-     *
-     * @param config the configuration
-     * @param targetDir the target staging directory for Buf sources
-     * @param seenHashes a map to track and de-duplicate gathered files
-     * @return the number of gathered files
-     * @throws IOException if an I/O error occurs
-     * @throws CodeGenException if a configuration or gathering error occurs
-     */
-    private int gatherFromBuf(Config config, Path targetDir, Map<String, String> seenHashes) throws IOException, CodeGenException {
-        String module = config.getOptionalValue(BUF_MODULE, String.class).orElse("").trim();
-        if (module.isEmpty()) {
-            return 0;
-        }
-
-        Files.createDirectories(targetDir);
-        Path temp = Files.createTempDirectory("grpc-gather-buf");
-        try {
-            List<String> command = new ArrayList<>();
-            command.add("buf");
-            command.add("export");
-            command.add(module);
-            for (String p : splitCsv(config.getOptionalValue(BUF_PATHS, String.class).orElse(""))) {
-                command.add("--path");
-                command.add(p);
-            }
-            command.add("--output");
-            command.add(temp.toAbsolutePath().toString());
-
-            Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-            String output = new String(process.getInputStream().readAllBytes());
-            int exit = process.waitFor();
-            if (exit != 0) {
-                throw new CodeGenException("buf export failed (" + exit + "): " + output);
-            }
-            return copyProtoTree(temp, temp, targetDir, seenHashes);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new CodeGenException("Interrupted while running buf export", e);
-        } finally {
-            deleteTree(temp);
-        }
     }
 
     /**

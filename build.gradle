@@ -4,8 +4,8 @@ plugins {
     id 'signing'
     id 'pl.allegro.tech.build.axion-release' version '1.21.1'
     id 'com.gradleup.nmcp.aggregation' version '1.4.4'
-    id 'io.quarkus.extension' version '3.34.2' apply false
-    id 'io.quarkus' version '3.34.2' apply false
+    id 'io.quarkus.extension' version '3.34.3' apply false
+    id 'io.quarkus' version '3.34.3' apply false
 }
 
 // Axion-release configuration
@@ -22,9 +22,10 @@ scmVersion {
     }
 }
 
+def scmVer = scmVersion.version.toString()
 allprojects {
     group = 'ai.pipestream'
-    version = scmVersion.version
+    version = scmVer
 }
 
 subprojects {
@@ -49,6 +50,32 @@ subprojects {
 
     tasks.withType(Test).configureEach {
         useJUnitPlatform()
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        if (project.name != 'integration-tests') {
+            doFirst {
+                // Quarkus ExtensionAnnotationProcessor requires a pom.xml to generate documentation.
+                // It searches 3 levels above StandardLocation.CLASS_OUTPUT.
+                // In standard Gradle layout, this is usually:
+                // build/classes/java/main/ -> build/classes/java/ -> build/classes/
+                // So we place a minimal pom.xml there.
+                def pomDir = file("${buildDir}/classes")
+                if (!pomDir.exists()) {
+                    pomDir.mkdirs()
+                }
+                new File(pomDir, "pom.xml").text = """<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>${project.group}</groupId>
+    <artifactId>${project.name}</artifactId>
+    <version>${project.version}</version>
+    <name>${project.name}</name>
+</project>
+"""
+            }
+        }
     }
 
     if (project.name != 'integration-tests') {
@@ -95,8 +122,9 @@ subprojects {
         signing {
             def signingKey = System.getenv('GPG_PRIVATE_KEY')
             def signingPassword = System.getenv('GPG_PASSPHRASE')
-            required { signingKey != null && !signingKey.isBlank() }
-            if (signingKey && signingPassword) {
+            def isSigningRequired = signingKey != null && !signingKey.isBlank()
+            required = isSigningRequired
+            if (isSigningRequired && signingPassword) {
                 useInMemoryPgpKeys(signingKey, signingPassword)
                 sign publishing.publications
             }

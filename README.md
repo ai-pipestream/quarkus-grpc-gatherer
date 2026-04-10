@@ -10,7 +10,6 @@ It is designed to pair with [`quarkus-grpc-zero`](https://github.com/quarkiverse
   - filesystem directories
   - dependency jars
   - a git repository/subdirectory
-  - a Buf module (`buf export`)
 - merges into Quarkus proto input directory (`src/main/proto`)
 - deduplicates identical files and fails fast on conflicting content for the same relative path
 
@@ -32,8 +31,6 @@ All keys are build-time and use the `quarkus.grpc-gather.*` prefix.
 | `quarkus.grpc-gather.git-username` | Git username for authenticated clone | unset |
 | `quarkus.grpc-gather.git-password` | Git password/token paired with username | unset |
 | `quarkus.grpc-gather.git-token` | Git token (uses `x-access-token` auth) | unset |
-| `quarkus.grpc-gather.buf-module` | Buf module (e.g. `buf.build/org/mod`) | unset |
-| `quarkus.grpc-gather.buf-paths` | Comma-separated `--path` filters for `buf export` | unset |
 
 ## Gradle usage
 

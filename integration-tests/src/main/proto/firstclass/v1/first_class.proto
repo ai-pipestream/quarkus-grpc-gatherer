@@ -1,13 +1,13 @@
 syntax = "proto3";
 
-package firstclass.v1;
+package ai.pipestream.firstclass.v1;
 
 import "google/protobuf/any.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
-option java_package = "firstclass.v1";
+option java_package = "ai.pipestream.firstclass.v1";
 option java_outer_classname = "FirstClassProto";
 
 message FirstClassRequest {

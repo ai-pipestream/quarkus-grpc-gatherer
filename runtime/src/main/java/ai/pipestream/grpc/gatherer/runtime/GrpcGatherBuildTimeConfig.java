@@ -10,7 +10,7 @@ import io.smallrye.config.WithDefault;
 /**
  * Build-time configuration for the gRPC Proto Gatherer extension.
  * <p>
- * This extension allows gathering {@code .proto} files from various sources (filesystem, JARs, Git, Buf)
+ * This extension allows gathering {@code .proto} files from various sources (filesystem, JARs, Git)
  * before any gRPC code generation takes place. It is typically used in conjunction with
  * {@code quarkus-grpc-zero}.
  */
@@ -112,21 +112,6 @@ public interface GrpcGatherBuildTimeConfig {
      * @return the git token
      */
     Optional<String> gitToken();
-
-    /**
-     * The Buf module to export (e.g., {@code buf.build/org/module}).
-     * Requires the {@code buf} CLI to be installed and available on the PATH.
-     *
-     * @return the buf module
-     */
-    Optional<String> bufModule();
-
-    /**
-     * Comma-separated list of {@code --path} filters to pass to {@code buf export}.
-     *
-     * @return the buf paths
-     */
-    Optional<String> bufPaths();
 
     /**
      * If true, includes Google's well-known types (e.g., {@code any.proto}, {@code timestamp.proto})
