@@ -1,8 +1,8 @@
 package ai.pipestream.grpc.gatherer.deployment;
 
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -11,12 +11,10 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
-import io.quarkus.bootstrap.prebuild.CodeGenException;
-
 class GrpcGatherCodeGenConflictTest {
 
     @Test
-    void failsFastOnConflictingProtoContent() throws Exception {
+    void warnsOnConflictingProtoContent() throws Exception {
         GrpcGatherCodeGen codeGen = new GrpcGatherCodeGen();
         Method method = GrpcGatherCodeGen.class.getDeclaredMethod(
                 "copySingleProto",
@@ -30,26 +28,26 @@ class GrpcGatherCodeGenConflictTest {
         try {
             Path first = temp.resolve("a.proto");
             Path second = temp.resolve("b.proto");
-            Files.writeString(first, "syntax = \"proto3\";\nmessage A {}\n");
-            Files.writeString(second, "syntax = \"proto3\";\nmessage B {}\n");
+            String firstContent = "syntax = \"proto3\";\nmessage A {}\n";
+            String secondContent = "syntax = \"proto3\";\nmessage B {}\n";
+            Files.writeString(first, firstContent);
+            Files.writeString(second, secondContent);
 
             Map<String, String> seen = new HashMap<>();
-            Path target = temp.resolve("out");
+            Path targetDir = temp.resolve("out");
+            Files.createDirectories(targetDir);
 
-            method.invoke(codeGen, first, Path.of("demo/v1/conflict.proto"), target, seen);
+            // First one wins
+            method.invoke(codeGen, first, Path.of("demo/v1/conflict.proto"), targetDir, seen);
+            assertEquals(firstContent, Files.readString(targetDir.resolve("demo/v1/conflict.proto")));
 
-            assertThrows(CodeGenException.class, () -> {
-                try {
-                    method.invoke(codeGen, second, Path.of("demo/v1/conflict.proto"), target, seen);
-                } catch (InvocationTargetException e) {
-                    if (e.getCause() instanceof CodeGenException cge) {
-                        throw cge;
-                    }
-                    throw new RuntimeException(e.getCause());
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
+            // Second one should not throw but skip
+            assertDoesNotThrow(() -> {
+                method.invoke(codeGen, second, Path.of("demo/v1/conflict.proto"), targetDir, seen);
             });
+            
+            // Verify content is still the first one's
+            assertEquals(firstContent, Files.readString(targetDir.resolve("demo/v1/conflict.proto")));
         } finally {
             Files.walk(temp)
                     .sorted((a, b) -> b.compareTo(a))

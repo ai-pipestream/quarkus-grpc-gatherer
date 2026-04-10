@@ -11,7 +11,7 @@ It is designed to pair with [`quarkus-grpc-zero`](https://github.com/quarkiverse
   - dependency jars
   - a git repository/subdirectory
 - merges into Quarkus proto input directory (`src/main/proto`)
-- deduplicates identical files and fails fast on conflicting content for the same relative path
+- deduplicates identical files and warns on conflicting content for the same relative path (first one wins)
 
 ## Configuration
 

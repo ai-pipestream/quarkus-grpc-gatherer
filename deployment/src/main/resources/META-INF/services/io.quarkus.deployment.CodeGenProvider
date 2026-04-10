@@ -1,1 +1,2 @@
 ai.pipestream.grpc.gatherer.deployment.GrpcGatherCodeGen
+ai.pipestream.grpc.gatherer.deployment.GrpcZeroProxyCodeGen

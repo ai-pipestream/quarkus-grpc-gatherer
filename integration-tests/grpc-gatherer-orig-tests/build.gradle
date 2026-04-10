@@ -1,0 +1,40 @@
+plugins {
+    id 'io.quarkus'
+}
+
+dependencies {
+    implementation platform('io.quarkus.platform:quarkus-bom:3.34.3')
+    implementation project(':quarkus-grpc-gatherer')
+    implementation 'io.quarkus:quarkus-arc'
+    implementation 'io.quarkus:quarkus-grpc-stubs'
+    implementation 'io.quarkiverse.grpc.zero:quarkus-grpc-zero:0.0.8'
+    implementation 'io.grpc:grpc-services:1.72.0'
+
+    testImplementation 'io.quarkus:quarkus-junit5'
+    testImplementation 'io.rest-assured:rest-assured'
+}
+
+configurations.all {
+    // Force protobuf-java to the version expected by grpc-zero 0.0.8
+    resolutionStrategy.eachDependency { DependencyResolveDetails details ->
+        if (details.requested.group == 'com.google.protobuf' && details.requested.name.startsWith('protobuf-java')) {
+            details.useVersion '4.34.1'
+        }
+    }
+}
+
+tasks.named('compileJava') {
+    dependsOn 'quarkusGenerateCode'
+}
+
+tasks.named('compileTestJava') {
+    dependsOn 'quarkusGenerateCode'
+}
+
+// sourceSets {
+//     main {
+//         java {
+//             srcDirs += file('build/classes/java/quarkus-generated-sources/grpc')
+//         }
+//     }
+// }

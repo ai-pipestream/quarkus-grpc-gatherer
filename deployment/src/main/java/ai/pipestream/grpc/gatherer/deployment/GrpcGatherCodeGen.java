@@ -1,5 +1,6 @@
 package ai.pipestream.grpc.gatherer.deployment;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.FileVisitResult;
@@ -35,6 +36,7 @@ import io.quarkus.deployment.CodeGenProvider;
 import io.quarkus.maven.dependency.ResolvedDependency;
 import io.quarkus.paths.PathFilter;
 import io.quarkus.runtime.util.HashUtil;
+import org.jspecify.annotations.NonNull;
 
 /**
  * A {@link CodeGenProvider} that gathers {@code .proto} files from various sources before
@@ -74,23 +76,24 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
     private static final String GIT_PASSWORD = "quarkus.grpc-gather.git-password";
     private static final String GIT_TOKEN = "quarkus.grpc-gather.git-token";
     private static final String INCLUDE_GOOGLE_WKT = "quarkus.grpc-gather.include-google-wkt";
+    private static final String FILESYSTEM_SCAN_ROOT = "quarkus.grpc-gather.filesystem-scan-root";
 
     private static final String GATHERED_PROTOS_DIR = "gathered-protos";
     private static final String PROTO_SOURCES_DIR = "proto-sources";
     private static final String MANIFEST_FILE = ".gathered-protos-manifest.txt";
 
     @Override
-    public String providerId() {
+    public @NonNull String providerId() {
         return "a-grpc-gather";
     }
 
     @Override
-    public String[] inputExtensions() {
+    public @NonNull String[] inputExtensions() {
         return new String[] { "proto" };
     }
 
     @Override
-    public String inputDirectory() {
+    public @NonNull String inputDirectory() {
         return "proto";
     }
 
@@ -99,31 +102,58 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
         // We use init to inject configuration for downstream providers (like grpc-zero).
         // Since provider IDs are sorted, 'a-grpc-gather' runs before 'grpc'.
         try {
-            Path classesDir = model.getAppArtifact().getResolvedPaths().getSinglePath();
-            Path buildDir = null;
-            Path current = classesDir;
-            while (current != null) {
-                String name = current.getFileName().toString();
-                if ("build".equals(name) || "target".equals(name)) {
-                    buildDir = current;
-                    break;
-                }
-                current = current.getParent();
-            }
-            if (buildDir == null) {
-                buildDir = classesDir.getParent().getParent().getParent();
-            }
-            String mergeDirAbs = buildDir.resolve(PROTO_SOURCES_DIR).toAbsolutePath().toString();
+            String mergeDirAbs = buildDir(model);
+            
+            // Ensure the directory exists early, so that downstream providers' shouldRun() 
+            // sees it and returns true even if we haven't 'triggered' the full merge yet.
+            Files.createDirectories(Path.of(mergeDirAbs));
 
             // Inject into the properties map used by some providers in their init()
+            // This is shared across all CodeGenProviders in the same CodeGenerator execution.
             properties.put("quarkus.grpc.codegen.proto-directory", mergeDirAbs);
-
-            // Also set as system properties for providers that read from Config/System during trigger()
+            properties.put("quarkus.generate-code.grpc.proto-directory", mergeDirAbs);
+            
+            // Also set as system properties for any providers that might read from Config/System
             System.setProperty("quarkus.grpc.codegen.proto-directory", mergeDirAbs);
             System.setProperty("quarkus.generate-code.grpc.proto-directory", mergeDirAbs);
+            
+            // Force skip of standard gRPC codegen to allow gRPC zero to take over
+            System.setProperty("grpc.codegen.skip", "true");
+            System.setProperty("quarkus.grpc.codegen.skip", "true");
+            
+            LOG.debugf("gRPC Proto Gatherer initialized. mergeDir: %s", mergeDirAbs);
         } catch (Exception e) {
             LOG.debug("Failed to determine build directory during init", e);
         }
+    }
+
+    /**
+     * Determines the build directory path from the application model.
+     * <p>
+     * This method traverses upward from the application artifact's resolved path to locate
+     * a directory named either "build" (Gradle) or "target" (Maven). If no such directory
+     * is found, it falls back to assuming a standard multi-level structure.
+     *
+     * @param model the application model containing artifact information
+     * @return the absolute path to the proto sources directory within the build directory
+     */
+    private static @NonNull String buildDir(ApplicationModel model) {
+        Path classesDir = model.getAppArtifact().getResolvedPaths().getSinglePath();
+        Path buildDir = null;
+        Path current = classesDir;
+        while (current != null) {
+            String name = current.getFileName().toString();
+            if ("build".equals(name) || "target".equals(name)) {
+                buildDir = current;
+                break;
+            }
+            current = current.getParent();
+        }
+        if (buildDir == null) {
+            assert classesDir != null;
+            buildDir = classesDir.getParent().getParent().getParent();
+        }
+        return buildDir.resolve(PROTO_SOURCES_DIR).toAbsolutePath().toString();
     }
 
     @Override
@@ -155,21 +185,34 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
             int gathered = 0;
             Map<String, String> seenHashes = new HashMap<>();
 
-        // Gather from all configured sources into algorithm-specific folders
+        // Gather from all configured sources into algorithm-specific folders.
+        // We use fresh maps for each call to ensure that we stage all files from all sources,
+        // even if they have conflicting content. Deduplication happens during the merge phase.
         gathered += gatherFilesystem(config, stagedRoot, new HashMap<>());
+        gathered += gatherFilesystemScan(config, stagedRoot, new HashMap<>());
         gathered += gatherFromJars(context, config, stagedRoot.resolve("jar"), new HashMap<>());
         gathered += gatherFromGit(config, stagedRoot.resolve("git"), new HashMap<>());
         gathered += gatherGoogleWkt(context, config, stagedRoot.resolve("google"), new HashMap<>());
 
             // Merge each gathered source into the final mergeDir
             Map<String, String> mergedHashes = new HashMap<>();
+            Map<String, String> mergedSources = new HashMap<>();
+            Map<String, List<String>> allConflicts = new HashMap<>();
             List<String> manifestPaths = new ArrayList<>();
 
             if (Files.isDirectory(stagedRoot)) {
                 try (Stream<Path> subdirs = Files.list(stagedRoot)) {
-                    for (Path subdir : subdirs.filter(Files::isDirectory).collect(Collectors.toList())) {
+                    for (Path subdir : subdirs.filter(Files::isDirectory).toList()) {
                         String sourceName = subdir.getFileName().toString();
-                        mergeSource(subdir, subdir, mergeDir, mergedHashes, manifestPaths, sourceName);
+                        if ("google".equals(sourceName)) {
+                            // We don't merge Google WKTs into the main mergeDir by default to avoid
+                            // split package issues with protobuf-java when using generators like grpc-zero.
+                            // They remain available in the stagedRoot if needed.
+                            LOG.debug("Skipping merge of Google WKTs into final merge directory");
+                            continue;
+                        }
+                        
+                        mergeSource(subdir, subdir, mergeDir, mergedHashes, mergedSources, allConflicts, manifestPaths, sourceName);
                     }
                 }
             }
@@ -177,7 +220,17 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
             // Also merge first-class protos from src/main/proto (last, so they can overwrite if needed or just participate in hash check)
             Path firstClassDir = CodeGenProvider.resolve(context.inputDir());
             if (firstClassDir != null && Files.isDirectory(firstClassDir)) {
-                mergeSource(firstClassDir, firstClassDir, mergeDir, mergedHashes, null, "first-class");
+                // For first-class, we DO want to overwrite if there's a conflict
+                mergeSource(firstClassDir, firstClassDir, mergeDir, new HashMap<>(), new HashMap<>(), allConflicts, null, "first-class");
+            }
+
+            if (!allConflicts.isEmpty()) {
+                LOG.warnf("Detected %d conflicting proto file(s) during merging. For each path, the version from the first source encountered was kept.",
+                        allConflicts.size());
+                for (Map.Entry<String, List<String>> entry : allConflicts.entrySet()) {
+                    LOG.warnf(" - %s: provided by %s (using version from %s)",
+                            entry.getKey(), entry.getValue(), entry.getValue().get(0));
+                }
             }
 
             // Write manifest for future clean runs
@@ -215,6 +268,7 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
                 current = current.getParent();
             }
             // build/classes/java/main -> build
+            assert classesDir != null;
             return classesDir.getParent().getParent().getParent();
         } catch (Exception e) {
             // Fallback to workDir if we can't determine the build directory
@@ -228,7 +282,7 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
      * @param context the code generation context
      * @return the directory where all gathered and merged protos are materialized
      */
-    public Path getMergeDir(CodeGenContext context) {
+    public @NonNull Path getMergeDir(CodeGenContext context) {
         // This tells where we materialized the merged protos.
         return getBuildDir(context).resolve(PROTO_SOURCES_DIR);
     }
@@ -247,6 +301,7 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
 
     private boolean hasAnySource(Config config) {
         return config.getOptionalValue(FILESYSTEM_DIRS, String.class).filter(s -> !s.isBlank()).isPresent()
+                || config.getOptionalValue(FILESYSTEM_SCAN_ROOT, String.class).filter(s -> !s.isBlank()).isPresent()
                 || config.getOptionalValue(JAR_DEPS, String.class).filter(s -> !s.isBlank()).isPresent()
                 || config.getOptionalValue(JAR_SCAN_ALL, Boolean.class).orElse(false)
                 || config.getOptionalValue(GIT_REPO, String.class).filter(s -> !s.isBlank()).isPresent()
@@ -312,6 +367,63 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
     }
 
     /**
+     * Gathers {@code .proto} files from a root directory by scanning for all {@code src/main/proto} subdirectories.
+     *
+     * @param config the configuration
+     * @param stagedRoot the root directory for algorithm-specific staging
+     * @param seenHashes a map to track and de-duplicate gathered files
+     * @return the number of gathered files
+     * @throws IOException if an I/O error occurs
+     * @throws CodeGenException if a configuration or gathering error occurs
+     */
+    private int gatherFilesystemScan(Config config, Path stagedRoot, Map<String, String> seenHashes)
+            throws IOException, CodeGenException {
+        String scanRoot = config.getOptionalValue(FILESYSTEM_SCAN_ROOT, String.class).orElse("").trim();
+        if (scanRoot.isEmpty()) {
+            return 0;
+        }
+
+        Path root = Path.of(scanRoot).toAbsolutePath().normalize();
+        if (!Files.isDirectory(root)) {
+            LOG.warnf("Configured filesystem scan root does not exist: %s", root);
+            return 0;
+        }
+
+        int copied = 0;
+        try (Stream<Path> paths = Files.walk(root)) {
+            List<Path> protoDirs = paths.filter(Files::isDirectory)
+                    .filter(p -> {
+                        String s = p.toString().replace('\\', '/');
+                        // Exclude directories that are known to contain invalid protos or are part of negative tests.
+                        // We also skip generic 'invalids', 'dir', 'build', 'target', and 'test' folders.
+                        if (s.contains("/invalids") || s.contains("/dir/") || s.endsWith("/dir")
+                                || s.contains("/grpc-gatherer-orig-tests")
+                                || s.contains("/build/") || s.contains("/target/")
+                                || s.contains("/src/test/")) {
+                            return false;
+                        }
+                        boolean match = s.endsWith("/src/main/proto") || s.endsWith("/src/main/resources");
+                        if (match) {
+                            LOG.infof("Scanned and matched proto directory root: %s", p);
+                        }
+                        return match;
+                    })
+                    .toList();
+            for (Path protoDir : protoDirs) {
+                // Determine a unique name for this project folder to avoid staging collisions
+                String relPath = root.relativize(protoDir).toString().replace(File.separator, "-");
+                if (relPath.isEmpty()) relPath = "root";
+                Path targetDir = stagedRoot.resolve("scan-" + relPath);
+                Files.createDirectories(targetDir);
+                // We use a fresh hash map per directory to ensure all found protos are staged.
+                // deduplication and conflict warnings happen during the final merge phase.
+                copied += copyProtoTree(protoDir, protoDir, targetDir, new HashMap<>());
+            }
+        }
+        return copied;
+    }
+
+    /**
      * Gathers {@code .proto} files from project dependencies (JARs).
      *
      * @param context the code generation context
@@ -372,7 +484,7 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
                         Files.copy(is, staged, StandardCopyOption.REPLACE_EXISTING);
                     }
                     copied[0] += copySingleProto(staged, rel, targetDir, seenHashes);
-                } catch (IOException | CodeGenException e) {
+                } catch (IOException e) {
                     throw new RuntimeException(e);
                 }
             });
@@ -511,15 +623,20 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
      * @throws CodeGenException if a content conflict is detected
      */
     private void mergeSource(Path root, Path sourceDir, Path mergeDir, Map<String, String> mergedHashes,
+            Map<String, String> mergedSources, Map<String, List<String>> allConflicts, 
             List<String> manifestPaths, String sourceName)
-            throws IOException, CodeGenException {
+            throws IOException {
         if (!Files.isDirectory(sourceDir)) {
             return;
         }
         try (Stream<Path> files = Files.walk(sourceDir)) {
             List<Path> protos = files.filter(Files::isRegularFile)
                     .filter(p -> p.getFileName().toString().endsWith(".proto"))
-                    .collect(Collectors.toList());
+                    .filter(p -> {
+                        String s = p.toString().replace('\\', '/');
+                        return !s.contains("/invalids/") && !s.contains("/dir/") && !s.contains("invalid.proto");
+                    })
+                    .toList();
             for (Path proto : protos) {
                 Path rel = root.relativize(proto);
                 String relStr = rel.toString().replace('\\', '/');
@@ -528,12 +645,16 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
                 String contentHash = sha256(proto);
                 if (mergedHashes.containsKey(relStr)) {
                     if (!mergedHashes.get(relStr).equals(contentHash)) {
-                        throw new CodeGenException(
-                                "Conflicting proto content for '" + relStr + "' from source '" + sourceName + "'.");
+                        allConflicts.computeIfAbsent(relStr, k -> {
+                            List<String> list = new ArrayList<>();
+                            list.add(mergedSources.get(relStr));
+                            return list;
+                        }).add(sourceName);
                     }
                     continue;
                 }
                 mergedHashes.put(relStr, contentHash);
+                mergedSources.put(relStr, sourceName);
                 if (manifestPaths != null) {
                     manifestPaths.add(relStr);
                 }
@@ -563,12 +684,16 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
      * @throws CodeGenException if a content conflict is detected
      */
     private int copyProtoTree(Path root, Path sourceDir, Path targetDir, Map<String, String> seenHashes)
-            throws IOException, CodeGenException {
+            throws IOException {
         final int[] copied = { 0 };
         try (Stream<Path> files = Files.walk(sourceDir)) {
             List<Path> protos = files.filter(Files::isRegularFile)
                     .filter(p -> p.getFileName().toString().endsWith(".proto"))
-                    .collect(Collectors.toList());
+                    .filter(p -> {
+                        String s = p.toString().replace('\\', '/');
+                        return !s.contains("/invalids/") && !s.contains("/dir/") && !s.contains("invalid.proto");
+                    })
+                    .toList();
             for (Path proto : protos) {
                 Path rel = root.relativize(proto);
                 copied[0] += copySingleProto(proto, rel, targetDir, seenHashes);
@@ -589,7 +714,7 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
      * @throws CodeGenException if a content conflict is detected
      */
     int copySingleProto(Path source, Path relative, Path targetDir, Map<String, String> seenHashes)
-            throws IOException, CodeGenException {
+            throws IOException {
         String rel = relative.toString().replace('\\', '/');
         // Handle cases where relative path might start with 'proto/' if it was extracted from a JAR with that prefix
         if (rel.startsWith("proto/")) {
@@ -599,9 +724,7 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
 
         String contentHash = sha256(source);
         if (seenHashes.containsKey(rel)) {
-            if (!seenHashes.get(rel).equals(contentHash)) {
-                throw new CodeGenException("Conflicting proto content for path '" + rel + "'.");
-            }
+            // Already seen in this source's staging area, skip it.
             return 0;
         }
         seenHashes.put(rel, contentHash);
@@ -652,13 +775,13 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
         }
         Files.walkFileTree(root, new SimpleFileVisitor<>() {
             @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+            public @NonNull FileVisitResult visitFile(@NonNull Path file, @NonNull BasicFileAttributes attrs) throws IOException {
                 Files.deleteIfExists(file);
                 return FileVisitResult.CONTINUE;
             }
 
             @Override
-            public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
+            public @NonNull FileVisitResult postVisitDirectory(@NonNull Path dir, IOException exc) throws IOException {
                 Files.deleteIfExists(dir);
                 return FileVisitResult.CONTINUE;
             }

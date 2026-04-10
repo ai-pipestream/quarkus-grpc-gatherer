@@ -44,6 +44,14 @@ public interface GrpcGatherBuildTimeConfig {
     Optional<String> filesystemDirs();
 
     /**
+     * A root directory to recursively scan for all {@code src/main/proto} or
+     * {@code src/main/resources/protobuf} directories containing {@code .proto} files.
+     *
+     * @return the filesystem scan root
+     */
+    Optional<String> filesystemScanRoot();
+
+    /**
      * Comma-separated list of {@code groupId:artifactId} coordinates to scan for {@code .proto} files
      * within the project's runtime dependencies.
      *

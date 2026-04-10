@@ -51,12 +51,15 @@ class GathererWithGrpcZeroTest {
                 Files.exists(stagedProtoDir.resolve("git").resolve("services/search_service.proto")),
                 "Expected origin staging for git");
 
-        // Google WKT source.
-        assertTrue(
-                Files.exists(gatheredProtoDir.resolve("google/protobuf/any.proto")),
-                "Expected google WKT in gathered output");
+        // Google WKT source (staged only by default, not merged into sources to avoid split package).
         assertTrue(
                 Files.exists(stagedProtoDir.resolve("google").resolve("google/protobuf/any.proto")),
                 "Expected origin staging for google WKT");
+
+        // Scanned filesystem source (hello-world).
+        assertNotNull(Class.forName("examples.GreeterGrpc"), "Expected hello-world GreeterGrpc from scan root");
+        assertTrue(
+                Files.exists(gatheredProtoDir.resolve("helloworld.proto")),
+                "Expected helloworld.proto in gathered output");
     }
 }

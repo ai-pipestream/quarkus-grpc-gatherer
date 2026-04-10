@@ -56,25 +56,13 @@ class GrpcGathererProcessor {
             String protoDir = buildDir.resolve("proto-sources").toAbsolutePath().toString();
             LOG.debugf("Configuring gRPC proto directory to: %s", protoDir);
             
-            // NOTE: grpc-zero uses 'quarkus.grpc.codegen.proto-directory'
-            systemProperties.produce(new SystemPropertyBuildItem("quarkus.grpc.codegen.proto-directory", protoDir));
-            // Standard Quarkus gRPC also uses this:
-            systemProperties.produce(new SystemPropertyBuildItem("quarkus.generate-code.grpc.proto-directory", protoDir));
+            // NOTE: We don't produce SystemPropertyBuildItems here because they would trigger
+            // "unrecognized configuration key" warnings during augmentation.
+            // Instead, the configuration is handled early during the CodeGen phase
+            // by GrpcGatherCodeGen.java, which shares its properties map with other providers.
 
             if (grpcZeroConfig.generate()) {
-                // Manually trigger gRPC descriptor generation by setting the core property
-                systemProperties.produce(new SystemPropertyBuildItem("quarkus.generate-code.grpc.descriptor-set.generate", "true"));
-
-                // Provide defaults for descriptor set generation if grpc-zero is used.
-                if (grpcZeroConfig.outputDir().isEmpty()) {
-                    String descriptorDir = buildDir.resolve("grpc-descriptors").toAbsolutePath().toString();
-                    LOG.debugf("Configuring gRPC descriptor-set output directory to: %s", descriptorDir);
-                    systemProperties.produce(new SystemPropertyBuildItem("quarkus.generate-code.grpc.descriptor-set.output-dir", descriptorDir));
-                }
-                if (grpcZeroConfig.name().isEmpty()) {
-                    LOG.debug("Configuring gRPC descriptor-set name to: services.dsc");
-                    systemProperties.produce(new SystemPropertyBuildItem("quarkus.generate-code.grpc.descriptor-set.name", "services.dsc"));
-                }
+                // Similarly, defaults for descriptor set generation are handled during CodeGen.
             }
         }
     }

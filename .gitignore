@@ -1,6 +1,8 @@
 .gradle
 **/build/
+**/target/
 !**/src/**/build/
+!**/src/**/target/
 **/bin/
 .quarkus/
 
@@ -33,3 +35,5 @@ integration-tests/gathered-protos/
 integration-tests/grpc-descriptors/
 integration-tests/proto-sources/
 integration-tests/proto/
+/.idea/
+/.claude/
