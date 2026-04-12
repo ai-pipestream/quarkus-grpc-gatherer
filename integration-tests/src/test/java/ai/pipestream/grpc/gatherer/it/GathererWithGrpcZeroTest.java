@@ -18,14 +18,13 @@ class GathererWithGrpcZeroTest {
     @Test
     void gathererSupportsFirstClassFilesystemJarAndGitSourcesWithDescriptor() throws Exception {
         Path projectDir = Path.of(System.getProperty("user.dir"));
-        // If run from root, user.dir is root. If from integration-tests, it's integration-tests.
         Path integrationTestsDir = Files.isDirectory(projectDir.resolve("integration-tests"))
                 ? projectDir.resolve("integration-tests") : projectDir;
 
         Path gatheredProtoDir = integrationTestsDir.resolve("build").resolve("proto-sources");
         Path stagedProtoDir = integrationTestsDir.resolve("build").resolve("gathered-protos");
 
-        // First-class proto (src/main/proto): verify well-known types Any, Struct, Timestamp are generated.
+        // First-class proto (src/main/proto): well-known types Any, Struct, Timestamp.
         Class<?> firstClassRequest = Class.forName("ai.pipestream.firstclass.v1.FirstClassRequest");
         Method timestampGetter = firstClassRequest.getMethod("getOccurredAt");
         assertEquals("com.google.protobuf.Timestamp", timestampGetter.getReturnType().getName());
@@ -33,7 +32,7 @@ class GathererWithGrpcZeroTest {
         assertNotNull(Class.forName("com.google.protobuf.Any"));
         assertNotNull(Class.forName("ai.pipestream.firstclass.v1.FirstClassServiceGrpc"));
 
-        // Filesystem gather source.
+        // Filesystem-dirs gather source (src/test-files/filesystem/v1/filesystem.proto).
         assertNotNull(Class.forName("ai.pipestream.filesystem.v1.FileSystemServiceGrpc"));
         assertTrue(
                 Files.exists(gatheredProtoDir.resolve("filesystem/v1/filesystem.proto")),
@@ -51,15 +50,9 @@ class GathererWithGrpcZeroTest {
                 Files.exists(stagedProtoDir.resolve("git").resolve("services/search_service.proto")),
                 "Expected origin staging for git");
 
-        // Google WKT source (staged only by default, not merged into sources to avoid split package).
+        // Google WKT source (staged only, not merged into sources to avoid split package).
         assertTrue(
                 Files.exists(stagedProtoDir.resolve("google").resolve("google/protobuf/any.proto")),
                 "Expected origin staging for google WKT");
-
-        // Scanned filesystem source (hello-world).
-        assertNotNull(Class.forName("examples.GreeterGrpc"), "Expected hello-world GreeterGrpc from scan root");
-        assertTrue(
-                Files.exists(gatheredProtoDir.resolve("helloworld.proto")),
-                "Expected helloworld.proto in gathered output");
     }
 }

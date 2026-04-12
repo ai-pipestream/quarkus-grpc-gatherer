@@ -87,21 +87,25 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
      */
     @Override
     public void init(ApplicationModel model, Map<String, String> properties) {
-        // Inject the merge directory into the shared properties map so
-        // quarkus-grpc-zero (which reads this key in its own init()) compiles
-        // from our gathered output. Requires this provider to load before
-        // grpc-zero; classpath order (set the gatherer dep before grpc-zero
-        // in your build file) controls this.
+        // Best-effort: inject the merge directory into the shared properties
+        // map so quarkus-grpc-zero can pick it up in its own init().
         //
-        // Best-effort: if we can't resolve the merge directory at this phase
-        // (e.g. multi-output artifact), let the user set the key manually in
-        // application.properties. Never crash init() - that would break code
-        // generation for every provider.
+        // CAVEAT: CodeGenProvider iteration order is not guaranteed, and in
+        // practice grpc-zero's init() often runs before ours, so it reads the
+        // key as null and falls back to src/main/proto. Users who need this
+        // hand-off to work reliably should set
+        // quarkus.grpc.codegen.proto-directory explicitly in their build
+        // configuration (application.properties with an absolute path, or a
+        // Gradle/Maven system property pointing at their build directory).
+        //
+        // We still populate the map here for the case where ordering happens
+        // to work, and so that anything reading the map later (e.g. during
+        // trigger()) sees a consistent value.
         try {
             Path mergeDir = resolveMergeDir(model);
             Files.createDirectories(mergeDir);
             properties.put(GRPC_ZERO_INPUT_DIR_KEY, mergeDir.toAbsolutePath().toString());
-            LOG.debugf("gRPC gatherer: injected %s=%s", GRPC_ZERO_INPUT_DIR_KEY, mergeDir);
+            LOG.debugf("gRPC gatherer: set %s=%s", GRPC_ZERO_INPUT_DIR_KEY, mergeDir);
         } catch (Exception e) {
             LOG.debugf("Failed to initialize gatherer merge directory: %s", e.toString());
         }
