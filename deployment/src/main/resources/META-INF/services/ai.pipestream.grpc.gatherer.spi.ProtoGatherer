@@ -1,0 +1,5 @@
+ai.pipestream.grpc.gatherer.sources.FilesystemGatherer
+ai.pipestream.grpc.gatherer.sources.FilesystemScanGatherer
+ai.pipestream.grpc.gatherer.sources.JarDependencyGatherer
+ai.pipestream.grpc.gatherer.sources.GitRepoGatherer
+ai.pipestream.grpc.gatherer.sources.GoogleWktGatherer
