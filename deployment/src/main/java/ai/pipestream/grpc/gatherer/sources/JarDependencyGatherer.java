@@ -51,7 +51,7 @@ public final class JarDependencyGatherer implements ProtoGatherer {
         }
 
         Path targetDir = context.stagingDirFor(id());
-        Path jarTemp = context.codeGenContext().workDir().resolve("grpc-gather-jar-protos");
+        Path jarTemp = context.workDir().resolve("grpc-gather-jar-protos");
         Files.createDirectories(jarTemp);
 
         int copied = 0;

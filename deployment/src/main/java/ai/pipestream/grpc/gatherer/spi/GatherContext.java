@@ -13,33 +13,60 @@ import io.quarkus.paths.PathFilter;
 
 /**
  * Context passed to each {@link ProtoGatherer} during a gather run. Carries
- * the underlying {@link CodeGenContext}, the {@link Config} for reading
- * configuration keys, the staging root under which each gatherer owns a
- * subdirectory, and a shared seen-hashes map used to dedupe files staged
- * by the same gatherer.
+ * the {@link Config} for reading configuration keys, the {@link ApplicationModel}
+ * for dependency lookups, the staging root under which each gatherer owns a
+ * subdirectory, an optional working directory for temporary scratch space,
+ * and a shared seen-hashes map used to dedupe files staged by the same
+ * gatherer.
  *
- * <p>Implementations should read their configuration from
- * {@link #config()} using keys in the {@code quarkus.grpc-gather.<id>.*}
- * namespace and write files into {@link #stagingDirFor(String)} preserving
- * the relative paths that downstream code generation needs for imports.
+ * <p>The {@link CodeGenContext} is optional. The gatherer runs at two phases:
+ * once during {@code init()} (where {@code CodeGenContext} is unavailable
+ * because Quarkus has not yet entered the trigger phase) and once during
+ * {@code trigger()}. {@link ProtoGatherer} implementations should prefer the
+ * direct accessors ({@link #applicationModel()}, {@link #workDir()}) over
+ * reaching through {@link #codeGenContext()}, which may return {@code null}.
  */
 public final class GatherContext {
 
     private final CodeGenContext codeGenContext;
+    private final ApplicationModel applicationModel;
     private final Config config;
     private final Path stagingRoot;
+    private final Path workDir;
     private final Map<String, String> seenHashes;
     private final PathFilter excludeFilter;
 
+    /**
+     * Trigger-phase constructor: derives application model and work dir from
+     * the Quarkus {@link CodeGenContext}.
+     */
     public GatherContext(CodeGenContext codeGenContext, Config config, Path stagingRoot,
             Map<String, String> seenHashes, PathFilter excludeFilter) {
         this.codeGenContext = codeGenContext;
+        this.applicationModel = codeGenContext.applicationModel();
         this.config = config;
         this.stagingRoot = stagingRoot;
+        this.workDir = codeGenContext.workDir();
         this.seenHashes = seenHashes;
         this.excludeFilter = excludeFilter;
     }
 
+    /**
+     * Init-phase constructor: takes the application model and work dir
+     * directly because no {@link CodeGenContext} exists yet.
+     */
+    public GatherContext(ApplicationModel applicationModel, Config config, Path stagingRoot,
+            Path workDir, Map<String, String> seenHashes, PathFilter excludeFilter) {
+        this.codeGenContext = null;
+        this.applicationModel = applicationModel;
+        this.config = config;
+        this.stagingRoot = stagingRoot;
+        this.workDir = workDir;
+        this.seenHashes = seenHashes;
+        this.excludeFilter = excludeFilter;
+    }
+
+    /** May be {@code null} during init-phase invocations. */
     public CodeGenContext codeGenContext() {
         return codeGenContext;
     }
@@ -49,33 +76,28 @@ public final class GatherContext {
     }
 
     public ApplicationModel applicationModel() {
-        return codeGenContext.applicationModel();
+        return applicationModel;
     }
 
     /**
-     * @return the shared seen-hashes map used by {@code copySingleProto} to
-     *         dedupe files within a single gatherer's staging area
+     * @return a working directory for scratch operations (jar extraction,
+     *         git clones, etc.). Always non-null.
      */
+    public Path workDir() {
+        return workDir;
+    }
+
     public Map<String, String> seenHashes() {
         return seenHashes;
     }
 
-    /**
-     * @return the optional exclude filter (may be {@code null}) applied to
-     *         relative paths before copying
-     */
     public PathFilter excludeFilter() {
         return excludeFilter;
     }
 
     /**
      * Resolve the staging directory for the given gatherer id, creating it
-     * if it does not already exist. Each gatherer owns its own subdirectory
-     * under the staging root to prevent cross-contamination during merge.
-     *
-     * @param gathererId the gatherer's {@link ProtoGatherer#id()}
-     * @return the staging directory, guaranteed to exist
-     * @throws IOException if the directory cannot be created
+     * if it does not already exist.
      */
     public Path stagingDirFor(String gathererId) throws IOException {
         Path dir = stagingRoot.resolve(gathererId);
@@ -83,10 +105,6 @@ public final class GatherContext {
         return dir;
     }
 
-    /**
-     * @return the root staging directory (useful for gatherers that want to
-     *         own more than one subdirectory, e.g. filesystem-scan)
-     */
     public Path stagingRoot() {
         return stagingRoot;
     }

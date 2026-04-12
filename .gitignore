@@ -38,5 +38,10 @@ integration-tests/gathered-protos/
 integration-tests/grpc-descriptors/
 integration-tests/proto-sources/
 integration-tests/proto/
+
+# Files mirrored into the test's src/main/proto by the gatherer at build time.
+# These are tracked by .gathered-protos-manifest.txt and refreshed every run.
+integration-tests/src/main/proto/.gathered-protos-manifest.txt
+integration-tests/src/main/proto/schemas/
 /.idea/
 /.claude/

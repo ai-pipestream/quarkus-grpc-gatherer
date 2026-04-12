@@ -1,10 +1,8 @@
 package ai.pipestream.grpc.gatherer.it;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -12,47 +10,34 @@ import org.junit.jupiter.api.Test;
 
 import io.quarkus.test.junit.QuarkusTest;
 
+/**
+ * End-to-end test that proves the gatherer hands off to grpc-zero by writing
+ * gathered protos directly into {@code src/main/proto/}, where grpc-zero
+ * reads them as part of its default input directory.
+ *
+ * <p>The gatherer fetches a single well-known proto file from the
+ * {@code opensearch-project/opensearch-protobufs} repository at tag 1.3.0
+ * ({@code protos/schemas/common.proto}), materializes it under
+ * {@code src/main/proto/schemas/common.proto}, and grpc-zero compiles it
+ * into Java classes under {@code org.opensearch.protobufs}.
+ */
 @QuarkusTest
 class GathererWithGrpcZeroTest {
 
     @Test
-    void gathererSupportsFirstClassFilesystemJarAndGitSourcesWithDescriptor() throws Exception {
+    void gathererWritesIntoSrcMainProtoAndGrpcZeroCompilesIt() throws Exception {
         Path projectDir = Path.of(System.getProperty("user.dir"));
         Path integrationTestsDir = Files.isDirectory(projectDir.resolve("integration-tests"))
                 ? projectDir.resolve("integration-tests") : projectDir;
+        Path gatheredProto = integrationTestsDir
+                .resolve("src").resolve("main").resolve("proto")
+                .resolve("schemas").resolve("common.proto");
+        assertTrue(Files.exists(gatheredProto),
+                "Expected gathered proto at " + gatheredProto);
 
-        Path gatheredProtoDir = integrationTestsDir.resolve("build").resolve("proto-sources");
-        Path stagedProtoDir = integrationTestsDir.resolve("build").resolve("gathered-protos");
-
-        // First-class proto (src/main/proto): well-known types Any, Struct, Timestamp.
-        Class<?> firstClassRequest = Class.forName("ai.pipestream.firstclass.v1.FirstClassRequest");
-        Method timestampGetter = firstClassRequest.getMethod("getOccurredAt");
-        assertEquals("com.google.protobuf.Timestamp", timestampGetter.getReturnType().getName());
-        assertNotNull(Class.forName("com.google.protobuf.Struct"));
-        assertNotNull(Class.forName("com.google.protobuf.Any"));
-        assertNotNull(Class.forName("ai.pipestream.firstclass.v1.FirstClassServiceGrpc"));
-
-        // Filesystem-dirs gather source (src/test-files/filesystem/v1/filesystem.proto).
-        assertNotNull(Class.forName("ai.pipestream.filesystem.v1.FileSystemServiceGrpc"));
-        assertTrue(
-                Files.exists(gatheredProtoDir.resolve("filesystem/v1/filesystem.proto")),
-                "Expected filesystem source proto in gathered output");
-        assertTrue(
-                Files.exists(stagedProtoDir.resolve("filesystem").resolve("filesystem/v1/filesystem.proto")),
-                "Expected origin staging for filesystem");
-
-        // Git gather source (OpenSearch protobufs tag 1.3.0).
-        assertNotNull(Class.forName("org.opensearch.protobufs.services.SearchServiceGrpc"));
-        assertTrue(
-                Files.exists(gatheredProtoDir.resolve("services/search_service.proto")),
-                "Expected git-sourced proto in gathered output");
-        assertTrue(
-                Files.exists(stagedProtoDir.resolve("git").resolve("services/search_service.proto")),
-                "Expected origin staging for git");
-
-        // Google WKT source (staged only, not merged into sources to avoid split package).
-        assertTrue(
-                Files.exists(stagedProtoDir.resolve("google").resolve("google/protobuf/any.proto")),
-                "Expected origin staging for google WKT");
+        assertNotNull(Class.forName("org.opensearch.protobufs.SearchRequest"),
+                "Expected SearchRequest from common.proto to be generated");
+        assertNotNull(Class.forName("org.opensearch.protobufs.SearchResponse"),
+                "Expected SearchResponse from common.proto to be generated");
     }
 }

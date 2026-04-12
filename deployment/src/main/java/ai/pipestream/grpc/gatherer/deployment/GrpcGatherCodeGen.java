@@ -1,5 +1,6 @@
 package ai.pipestream.grpc.gatherer.deployment;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
@@ -15,6 +16,7 @@ import java.util.ServiceLoader;
 import java.util.stream.Stream;
 
 import org.eclipse.microprofile.config.Config;
+import org.eclipse.microprofile.config.ConfigProvider;
 import org.jboss.logging.Logger;
 import org.jspecify.annotations.NonNull;
 
@@ -36,14 +38,35 @@ import io.quarkus.paths.PathFilter;
  * filesystem directories, filesystem scan roots, JAR dependencies, Google
  * Well-Known Types, and Git repositories.
  *
- * <p>After every gatherer has staged its files, {@link #trigger(CodeGenContext)}
- * merges each staging subdirectory into a single proto source directory under
- * the build output, detects conflicts via content hash, and records the merge
- * set in a manifest for the next clean run.
+ * <h2>Output flow</h2>
  *
- * <p>The provider id {@code a-grpc-gather} sorts alphabetically before
- * {@code grpc}, so this provider runs before {@code quarkus-grpc-zero} and its
- * merged output is visible to the generator.
+ * <p>Each gather run does three things:
+ *
+ * <ol>
+ *   <li><b>Stage</b>: every {@link ai.pipestream.grpc.gatherer.spi.ProtoGatherer}
+ *       writes its files into its own subdirectory under
+ *       {@code build/gathered-protos-staging/<source>/}.
+ *   <li><b>Merge</b>: the staging subdirectories are combined into the
+ *       canonical, ephemeral output {@code build/gathered-protos/proto/},
+ *       with content-hash conflict detection.
+ *   <li><b>Mirror</b>: the merged output is then copied into
+ *       {@code src/main/proto/} so that quarkus-grpc-zero finds the files
+ *       through its default input directory. A manifest at
+ *       {@code src/main/proto/.gathered-protos-manifest.txt} records every
+ *       mirrored file so the next run can clean them before re-mirroring.
+ *       User-authored protos at the same relative path are never
+ *       overwritten - the mirror step skips and warns instead.
+ * </ol>
+ *
+ * <p>The mirror step exists as a temporary workaround. Once
+ * quarkus-grpc-zero exposes a configurable {@code proto-directories}
+ * (or equivalent) input list, the gatherer can drop the mirror and tell
+ * grpc-zero to read from {@code build/gathered-protos/proto/} directly
+ * without touching the source tree.
+ *
+ * <p>Users should gitignore the paths listed in the manifest so the
+ * mirrored files don't get committed. The set is logged at {@code info}
+ * level on every run.
  */
 public class GrpcGatherCodeGen implements CodeGenProvider {
 
@@ -53,11 +76,26 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
     private static final String CLEAN_TARGET = "quarkus.grpc-gather.clean-target";
     private static final String EXCLUDES = "quarkus.grpc-gather.excludes";
 
-    /** Key that grpc-zero reads in its {@code init()} to locate the input proto directory. */
-    private static final String GRPC_ZERO_INPUT_DIR_KEY = "quarkus.grpc.codegen.proto-directory";
+    /**
+     * Staging root (per-source gatherer subdirectories land here before merge).
+     * Relative to the build directory. Ephemeral - cleaned every run.
+     */
+    private static final String STAGING_DIR = "gathered-protos-staging";
 
-    private static final String GATHERED_PROTOS_DIR = "gathered-protos";
-    private static final String PROTO_SOURCES_DIR = "proto-sources";
+    /**
+     * Build-directory merge target. The canonical, ephemeral output where the
+     * gatherer combines every source into one tree with conflict detection.
+     * This is what we want grpc-zero to read from once upstream supports
+     * configurable proto directories.
+     */
+    private static final String BUILD_TARGET_ROOT = "gathered-protos";
+    private static final String BUILD_TARGET_PROTO_SUBDIR = "proto";
+
+    /**
+     * Manifest written into {@code src/main/proto} listing every file the
+     * mirror step copied there. Used to clean previously-mirrored files on
+     * the next run so stale output never accumulates in the source tree.
+     */
     private static final String MANIFEST_FILE = ".gathered-protos-manifest.txt";
 
     public GrpcGatherCodeGen() {
@@ -79,72 +117,129 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
     }
 
     /**
-     * Inject the merged proto source directory as {@link #GRPC_ZERO_INPUT_DIR_KEY}
-     * into the properties map so {@code quarkus-grpc-zero}'s {@code init()} picks
-     * it up and generates from our output. This is the documented
-     * {@link CodeGenProvider#init(ApplicationModel, Map)} contract - no system
-     * property pollution, no skip-flag hijack.
+     * Eagerly materialize {@code src/main/proto} during init() so that
+     * downstream providers like quarkus-grpc-zero see a directory their
+     * default {@code shouldRun()} check (which is just
+     * {@code Files.isDirectory(sourceDir)}) accepts. Otherwise grpc-zero
+     * skips itself for users who haven't yet committed any first-class
+     * proto files - and since the gatherer's mirror happens at trigger()
+     * time, by the time files exist grpc-zero has already given up.
+     */
+    /**
+     * The actual gather + mirror work happens here, NOT in {@link #trigger}.
+     * Reason: ServiceLoader iteration puts {@code grpc-zero} ahead of this
+     * gatherer in practice, and Quarkus's CodeGenerator runs every provider's
+     * {@code trigger()} in that same order. If we gathered in {@code trigger()},
+     * grpc-zero would walk an empty {@code src/main/proto} before we had a
+     * chance to mirror anything into it.
+     *
+     * <p>{@code init()} runs for every provider before any provider's
+     * {@code trigger()}, so by doing the work here we guarantee the source
+     * tree is populated before grpc-zero looks at it.
+     *
+     * <p>The trade-off: at init time we don't have a {@link CodeGenContext},
+     * so {@link GatherContext} is constructed from the {@link ApplicationModel}
+     * directly and {@link io.quarkus.deployment.CodeGenContext#workDir()} is
+     * approximated as {@code <buildDir>/grpc-gather-tmp}.
      */
     @Override
     public void init(ApplicationModel model, Map<String, String> properties) {
-        // Best-effort: inject the merge directory into the shared properties
-        // map so quarkus-grpc-zero can pick it up in its own init().
-        //
-        // CAVEAT: CodeGenProvider iteration order is not guaranteed, and in
-        // practice grpc-zero's init() often runs before ours, so it reads the
-        // key as null and falls back to src/main/proto. Users who need this
-        // hand-off to work reliably should set
-        // quarkus.grpc.codegen.proto-directory explicitly in their build
-        // configuration (application.properties with an absolute path, or a
-        // Gradle/Maven system property pointing at their build directory).
-        //
-        // We still populate the map here for the case where ordering happens
-        // to work, and so that anything reading the map later (e.g. during
-        // trigger()) sees a consistent value.
         try {
-            Path mergeDir = resolveMergeDir(model);
-            Files.createDirectories(mergeDir);
-            properties.put(GRPC_ZERO_INPUT_DIR_KEY, mergeDir.toAbsolutePath().toString());
-            LOG.debugf("gRPC gatherer: set %s=%s", GRPC_ZERO_INPUT_DIR_KEY, mergeDir);
+            Config config = ConfigProvider.getConfig();
+            if (!isEnabled(config)) {
+                return;
+            }
+            File moduleDirFile = model.getApplicationModule().getModuleDir();
+            if (moduleDirFile == null) {
+                LOG.debug("ApplicationModel has no module dir; skipping gatherer init");
+                return;
+            }
+            Path moduleDir = moduleDirFile.toPath();
+            Path srcMainProto = moduleDir.resolve("src").resolve("main").resolve("proto");
+            Path buildDir = fallbackBuildDirFromModel(model);
+            Path stagedRoot = buildDir.resolve(STAGING_DIR);
+            Path buildTargetDir = buildDir.resolve(BUILD_TARGET_ROOT).resolve(BUILD_TARGET_PROTO_SUBDIR);
+            Path workDir = buildDir.resolve("grpc-gather-tmp");
+
+            Files.createDirectories(srcMainProto);
+            if (config.getOptionalValue(CLEAN_TARGET, Boolean.class).orElse(true)) {
+                cleanPreviousMirrored(srcMainProto);
+            }
+            deleteTree(stagedRoot);
+            deleteTree(buildTargetDir);
+            Files.createDirectories(stagedRoot);
+            Files.createDirectories(buildTargetDir);
+            Files.createDirectories(workDir);
+
+            PathFilter excludeFilter = buildExcludeFilter(config);
+            Map<String, String> seenHashes = new HashMap<>();
+            GatherContext gatherContext = new GatherContext(model, config, stagedRoot, workDir, seenHashes, excludeFilter);
+
+            int gathered = runGatherers(gatherContext);
+            int merged = mergeStaged(stagedRoot, buildTargetDir);
+            int mirrored = mirrorToSrcMainProto(buildTargetDir, srcMainProto);
+
+            LOG.infof("gRPC gatherer staged %d proto file(s), merged %d into %s, mirrored %d into %s",
+                    gathered, merged, buildTargetDir, mirrored, srcMainProto);
         } catch (Exception e) {
-            LOG.debugf("Failed to initialize gatherer merge directory: %s", e.toString());
+            LOG.errorf(e, "gRPC gatherer init() failed: %s", e.toString());
         }
     }
 
     @Override
     public boolean trigger(CodeGenContext context) throws CodeGenException {
-        LOG.debugf("gRPC Proto Gatherer trigger called for context: %s", context.inputDir());
-        Config config = context.config();
-        if (!isEnabled(config)) {
-            return false;
+        // No-op. The actual gather work runs in init() so it completes
+        // before any other CodeGenProvider's trigger() runs. We still
+        // implement trigger() because Quarkus expects it.
+        return false;
+    }
+
+    /**
+     * Workaround until quarkus-grpc-zero supports configurable proto input
+     * directories: copy every file from the canonical build-dir target into
+     * {@code src/main/proto/} and record a manifest so the next run can
+     * remove these files cleanly.
+     *
+     * <p>Each mirrored file path is checked against any pre-existing user
+     * file at the same relative path; if there's a content mismatch, the
+     * gatherer logs a warning and skips the mirror for that path so the
+     * user's first-class proto is never overwritten.
+     */
+    private int mirrorToSrcMainProto(Path buildTargetDir, Path srcMainProto) throws IOException {
+        if (!Files.isDirectory(buildTargetDir)) {
+            return 0;
         }
-
-        Path buildDir = resolveBuildDir(context);
-        Path stagedRoot = buildDir.resolve(GATHERED_PROTOS_DIR);
-        Path mergeDir = buildDir.resolve(PROTO_SOURCES_DIR);
-        LOG.debugf("gRPC Proto Gatherer starting. stagedRoot: %s, mergeDir: %s", stagedRoot, mergeDir);
-
-        try {
-            if (config.getOptionalValue(CLEAN_TARGET, Boolean.class).orElse(true)) {
-                cleanPreviousGathered(mergeDir);
+        Path srcMainProtoAbs = srcMainProto.toAbsolutePath().normalize();
+        List<String> manifest = new ArrayList<>();
+        int copied = 0;
+        try (Stream<Path> walk = Files.walk(buildTargetDir)) {
+            List<Path> protos = walk
+                    .filter(Files::isRegularFile)
+                    .filter(p -> p.getFileName().toString().endsWith(".proto"))
+                    .toList();
+            for (Path proto : protos) {
+                String relStr = buildTargetDir.relativize(proto).toString().replace('\\', '/');
+                Path target = srcMainProto.resolve(relStr).toAbsolutePath().normalize();
+                if (!target.startsWith(srcMainProtoAbs)) {
+                    throw new IOException("Refusing to mirror outside src/main/proto: " + relStr);
+                }
+                if (Files.exists(target)) {
+                    String existingHash = ProtoFileCopier.sha256(target);
+                    String newHash = ProtoFileCopier.sha256(proto);
+                    if (!existingHash.equals(newHash)) {
+                        LOG.warnf("Skipping mirror of %s: a different file already exists at %s "
+                                + "(left as-is so user-authored protos are never overwritten)", relStr, target);
+                        continue;
+                    }
+                }
+                Files.createDirectories(target.getParent());
+                Files.copy(proto, target, StandardCopyOption.REPLACE_EXISTING);
+                manifest.add(relStr);
+                copied++;
             }
-
-            deleteTree(stagedRoot);
-            Files.createDirectories(stagedRoot);
-            Files.createDirectories(mergeDir);
-
-            PathFilter excludeFilter = buildExcludeFilter(config);
-            Map<String, String> seenHashes = new HashMap<>();
-            GatherContext gatherContext = new GatherContext(context, config, stagedRoot, seenHashes, excludeFilter);
-
-            int gathered = runGatherers(gatherContext);
-            int merged = mergeStaged(stagedRoot, mergeDir, context);
-
-            LOG.infof("gRPC gatherer staged %d proto file(s), merged %d into %s", gathered, merged, mergeDir);
-            return gathered > 0;
-        } catch (IOException e) {
-            throw new CodeGenException("Failed while gathering proto files", e);
         }
+        Files.write(srcMainProto.resolve(MANIFEST_FILE), manifest);
+        return copied;
     }
 
     private int runGatherers(GatherContext gatherContext) throws IOException, CodeGenException {
@@ -162,7 +257,15 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
         return gathered;
     }
 
-    private int mergeStaged(Path stagedRoot, Path mergeDir, CodeGenContext context) throws IOException {
+    /**
+     * Merge each staging subdirectory into the target directory, deduping
+     * by content hash and recording conflicts. First-class user protos in
+     * {@code src/main/proto} are NOT merged here - grpc-zero walks that
+     * directory independently as its default input. This gatherer only
+     * materializes the externally-gathered protos into a sibling source
+     * parent so grpc-zero compiles both naturally.
+     */
+    private int mergeStaged(Path stagedRoot, Path targetDir) throws IOException {
         Map<String, String> mergedHashes = new HashMap<>();
         Map<String, String> mergedSources = new HashMap<>();
         Map<String, List<String>> allConflicts = new HashMap<>();
@@ -172,29 +275,26 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
             try (Stream<Path> subdirs = Files.list(stagedRoot)) {
                 for (Path subdir : subdirs.filter(Files::isDirectory).toList()) {
                     String sourceName = subdir.getFileName().toString();
-                    // Google WKTs stay in their staging subdir to avoid split-package
-                    // collisions with protobuf-java at compile time.
+                    // Google WKTs stay in the staging area and are not merged.
+                    // protobuf-java already carries them at compile time, and
+                    // split-package collisions with protobuf-java's own jar
+                    // cause trouble if we materialize them alongside user types.
                     if ("google".equals(sourceName)) {
-                        LOG.debug("Skipping merge of Google WKTs into final merge directory");
+                        LOG.debug("Skipping merge of Google WKTs into final target directory");
                         continue;
                     }
-                    mergeSource(subdir, mergeDir, mergedHashes, mergedSources, allConflicts, manifestPaths, sourceName);
+                    mergeSource(subdir, targetDir, mergedHashes, mergedSources, allConflicts, manifestPaths, sourceName);
                 }
             }
         }
 
-        Path firstClassDir = CodeGenProvider.resolve(context.inputDir());
-        if (firstClassDir != null && Files.isDirectory(firstClassDir)) {
-            mergeSource(firstClassDir, mergeDir, mergedHashes, mergedSources, allConflicts, null, "first-class");
-        }
-
         reportConflicts(allConflicts);
 
-        Files.write(mergeDir.resolve(MANIFEST_FILE), manifestPaths);
+        Files.write(targetDir.resolve(MANIFEST_FILE), manifestPaths);
         return mergedHashes.size();
     }
 
-    private void mergeSource(Path sourceDir, Path mergeDir, Map<String, String> mergedHashes,
+    private void mergeSource(Path sourceDir, Path targetDir, Map<String, String> mergedHashes,
             Map<String, String> mergedSources, Map<String, List<String>> allConflicts,
             List<String> manifestPaths, String sourceName) throws IOException {
         if (!Files.isDirectory(sourceDir)) {
@@ -211,7 +311,7 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
                     .toList();
             for (Path proto : protos) {
                 String relStr = sourceDir.relativize(proto).toString().replace('\\', '/');
-                Path target = mergeDir.resolve(relStr).normalize();
+                Path target = targetDir.resolve(relStr).normalize();
                 String contentHash = ProtoFileCopier.sha256(proto);
 
                 if (mergedHashes.containsKey(relStr)) {
@@ -226,9 +326,7 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
                 }
                 mergedHashes.put(relStr, contentHash);
                 mergedSources.put(relStr, sourceName);
-                if (manifestPaths != null) {
-                    manifestPaths.add(relStr);
-                }
+                manifestPaths.add(relStr);
 
                 if (Files.exists(target) && ProtoFileCopier.sha256(target).equals(contentHash)) {
                     continue;
@@ -286,11 +384,6 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
         return fallbackBuildDirFromModel(context.applicationModel());
     }
 
-    /** Resolve the merge directory from just an {@link ApplicationModel} (used in {@link #init}). */
-    private static Path resolveMergeDir(ApplicationModel model) {
-        return fallbackBuildDirFromModel(model).resolve(PROTO_SOURCES_DIR);
-    }
-
     private static Path fallbackBuildDirFromModel(ApplicationModel model) {
         // Multi-output artifacts (e.g. Gradle's classes + resources) expose
         // multiple resolved paths. Any of them walks up to the same build/
@@ -308,21 +401,21 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
         return classesDir.getParent().getParent().getParent();
     }
 
-    public @NonNull Path getMergeDir(CodeGenContext context) {
-        return resolveBuildDir(context).resolve(PROTO_SOURCES_DIR);
-    }
-
-    private void cleanPreviousGathered(Path mergeDir) throws IOException {
-        Path manifest = mergeDir.resolve(MANIFEST_FILE);
+    /**
+     * Read the manifest from a previous gather run and remove every file it
+     * lists from {@code srcMainProto}, leaving user-authored protos intact.
+     */
+    private void cleanPreviousMirrored(Path srcMainProto) throws IOException {
+        Path manifest = srcMainProto.resolve(MANIFEST_FILE);
         if (!Files.exists(manifest)) {
             return;
         }
         List<String> paths = Files.readAllLines(manifest);
         for (String p : paths) {
-            Files.deleteIfExists(mergeDir.resolve(p));
+            Files.deleteIfExists(srcMainProto.resolve(p));
         }
         Files.deleteIfExists(manifest);
-        LOG.infof("Cleaned %d previously gathered proto(s)", paths.size());
+        LOG.infof("Cleaned %d previously mirrored proto(s) from %s", paths.size(), srcMainProto);
     }
 
     private static void deleteTree(Path root) throws IOException {

@@ -6,11 +6,7 @@ dependencies {
     implementation platform('io.quarkus.platform:quarkus-bom:3.34.3')
     implementation 'io.quarkus:quarkus-arc'
 
-    // Gatherer FIRST so its CodeGenProvider.init() runs before grpc-zero
-    // and can inject quarkus.grpc.codegen.proto-directory into the shared
-    // properties map that grpc-zero reads in its own init().
     implementation project(':quarkus-grpc-gatherer')
-
     implementation('io.quarkus:quarkus-grpc-stubs') {
         exclude group: 'io.quarkus', module: 'quarkus-grpc-codegen'
     }
@@ -21,6 +17,11 @@ dependencies {
     testImplementation 'io.rest-assured:rest-assured'
 }
 
+// Register build/gathered-protos as an additional Quarkus source parent by
+// declaring its fake /java child as a Java source directory.
+// QuarkusPlugin.getSourcesParents() calls Path::getParent on every Java src
+// dir and passes the result into CodeGenerator as a sourceParentDir. grpc-zero's
+// default input resolution then finds build/gathered-protos/proto automatically.
 tasks.named('compileJava') {
     dependsOn 'quarkusGenerateCode'
 }

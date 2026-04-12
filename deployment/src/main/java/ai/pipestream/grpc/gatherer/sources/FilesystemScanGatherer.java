@@ -55,7 +55,11 @@ public final class FilesystemScanGatherer implements ProtoGatherer {
             return 0;
         }
 
-        Path currentProjProtoDir = CodeGenProvider.resolve(context.codeGenContext().inputDir());
+        // Skip the user's own src/main/proto so we don't gather files we are
+        // about to write into. Only resolvable from a trigger-time context.
+        Path currentProjProtoDir = context.codeGenContext() != null
+                ? CodeGenProvider.resolve(context.codeGenContext().inputDir())
+                : null;
 
         int copied = 0;
         try (Stream<Path> paths = Files.walk(root)) {

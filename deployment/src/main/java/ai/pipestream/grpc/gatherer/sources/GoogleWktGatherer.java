@@ -41,7 +41,7 @@ public final class GoogleWktGatherer implements ProtoGatherer {
         Path targetDir = context.stagingDirFor(id());
         for (ResolvedDependency dep : context.applicationModel().getRuntimeDependencies()) {
             if (dep.getGroupId().equals("com.google.protobuf") && dep.getArtifactId().equals("protobuf-java")) {
-                Path temp = context.codeGenContext().workDir().resolve("grpc-gather-wkt");
+                Path temp = context.workDir().resolve("grpc-gather-wkt");
                 Files.createDirectories(temp);
                 return JarDependencyGatherer.extractProtoFromDependency(dep, temp, targetDir, context, "google/");
             }
