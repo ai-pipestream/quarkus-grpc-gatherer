@@ -43,5 +43,6 @@ integration-tests/proto/
 # These are tracked by .gathered-protos-manifest.txt and refreshed every run.
 integration-tests/src/main/proto/.gathered-protos-manifest.txt
 integration-tests/src/main/proto/schemas/
+integration-tests/src/main/proto/grpc/
 /.idea/
 /.claude/

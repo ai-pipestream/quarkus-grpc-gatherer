@@ -24,14 +24,16 @@ import io.quarkus.test.junit.QuarkusTest;
 @QuarkusTest
 class GathererWithGrpcZeroTest {
 
-    @Test
-    void gathererWritesIntoSrcMainProtoAndGrpcZeroCompilesIt() throws Exception {
+    private static Path srcMainProto() {
         Path projectDir = Path.of(System.getProperty("user.dir"));
         Path integrationTestsDir = Files.isDirectory(projectDir.resolve("integration-tests"))
                 ? projectDir.resolve("integration-tests") : projectDir;
-        Path gatheredProto = integrationTestsDir
-                .resolve("src").resolve("main").resolve("proto")
-                .resolve("schemas").resolve("common.proto");
+        return integrationTestsDir.resolve("src").resolve("main").resolve("proto");
+    }
+
+    @Test
+    void gitGatheredProtoIsCompiledByGrpcZero() throws Exception {
+        Path gatheredProto = srcMainProto().resolve("schemas").resolve("common.proto");
         assertTrue(Files.exists(gatheredProto),
                 "Expected gathered proto at " + gatheredProto);
 
@@ -39,5 +41,22 @@ class GathererWithGrpcZeroTest {
                 "Expected SearchRequest from common.proto to be generated");
         assertNotNull(Class.forName("org.opensearch.protobufs.SearchResponse"),
                 "Expected SearchResponse from common.proto to be generated");
+    }
+
+    @Test
+    void jarGatheredProtoIsCompiledByGrpcZero() throws Exception {
+        // grpc-services ships several .proto files; the gatherer pulls all of
+        // them out and grpc-zero recompiles each. health.proto is the smallest
+        // self-contained one and it lands at grpc/health/v1/health.proto with
+        // java_package=io.grpc.health.v1.
+        Path gatheredHealth = srcMainProto()
+                .resolve("grpc").resolve("health").resolve("v1").resolve("health.proto");
+        assertTrue(Files.exists(gatheredHealth),
+                "Expected gathered health.proto at " + gatheredHealth);
+
+        assertNotNull(Class.forName("io.grpc.health.v1.HealthCheckRequest"),
+                "Expected HealthCheckRequest from health.proto to be generated");
+        assertNotNull(Class.forName("io.grpc.health.v1.HealthCheckResponse"),
+                "Expected HealthCheckResponse from health.proto to be generated");
     }
 }
