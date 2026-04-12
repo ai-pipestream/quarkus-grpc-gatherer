@@ -87,13 +87,23 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
      */
     @Override
     public void init(ApplicationModel model, Map<String, String> properties) {
+        // Inject the merge directory into the shared properties map so
+        // quarkus-grpc-zero (which reads this key in its own init()) compiles
+        // from our gathered output. Requires this provider to load before
+        // grpc-zero; classpath order (set the gatherer dep before grpc-zero
+        // in your build file) controls this.
+        //
+        // Best-effort: if we can't resolve the merge directory at this phase
+        // (e.g. multi-output artifact), let the user set the key manually in
+        // application.properties. Never crash init() - that would break code
+        // generation for every provider.
         try {
             Path mergeDir = resolveMergeDir(model);
             Files.createDirectories(mergeDir);
             properties.put(GRPC_ZERO_INPUT_DIR_KEY, mergeDir.toAbsolutePath().toString());
             LOG.debugf("gRPC gatherer: injected %s=%s", GRPC_ZERO_INPUT_DIR_KEY, mergeDir);
-        } catch (IOException e) {
-            LOG.debug("Failed to initialize gatherer merge directory", e);
+        } catch (Exception e) {
+            LOG.debugf("Failed to initialize gatherer merge directory: %s", e.toString());
         }
     }
 
@@ -278,7 +288,10 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
     }
 
     private static Path fallbackBuildDirFromModel(ApplicationModel model) {
-        Path classesDir = model.getAppArtifact().getResolvedPaths().getSinglePath();
+        // Multi-output artifacts (e.g. Gradle's classes + resources) expose
+        // multiple resolved paths. Any of them walks up to the same build/
+        // or target/ ancestor, so take the first one.
+        Path classesDir = model.getAppArtifact().getResolvedPaths().iterator().next();
         Path current = classesDir;
         while (current != null) {
             String name = current.getFileName().toString();
