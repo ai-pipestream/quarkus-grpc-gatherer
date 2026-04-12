@@ -5,7 +5,6 @@ import java.nio.file.Path;
 import org.jboss.logging.Logger;
 
 import ai.pipestream.grpc.gatherer.runtime.GrpcGatherBuildTimeConfig;
-import ai.pipestream.grpc.gatherer.runtime.GrpcZeroDescriptorSetGatherConfig;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.builditem.FeatureBuildItem;
@@ -41,29 +40,20 @@ class GrpcGathererProcessor {
      * defaults for {@code grpc-zero} descriptor set generation if enabled.
      *
      * @param config the gatherer build-time configuration
-     * @param grpcZeroConfig the configuration for grpc-zero descriptor set gathering
      * @param outputTarget the output target build item
      * @param systemProperties the producer for system properties
      */
     @BuildStep
     void configureGrpc(GrpcGatherBuildTimeConfig config,
-                       GrpcZeroDescriptorSetGatherConfig grpcZeroConfig,
                        OutputTargetBuildItem outputTarget,
                        BuildProducer<SystemPropertyBuildItem> systemProperties) {
         if (config.enabled()) {
-            // Automatically point gRPC codegen to the gathered proto files.
+            // Automatically point gRPC codegen to the gathered proto files if desired.
+            // However, we avoid using System.setProperty here to follow standard Quarkus patterns.
+            // The user should configure 'quarkus.grpc.codegen.proto-directory' in their application.properties.
             Path buildDir = outputTarget.getOutputDirectory();
             String protoDir = buildDir.resolve("proto-sources").toAbsolutePath().toString();
-            LOG.debugf("Configuring gRPC proto directory to: %s", protoDir);
-            
-            // NOTE: We don't produce SystemPropertyBuildItems here because they would trigger
-            // "unrecognized configuration key" warnings during augmentation.
-            // Instead, the configuration is handled early during the CodeGen phase
-            // by GrpcGatherCodeGen.java, which shares its properties map with other providers.
-
-            if (grpcZeroConfig.generate()) {
-                // Similarly, defaults for descriptor set generation are handled during CodeGen.
-            }
+            LOG.debugf("gRPC gatherer produced proto files in: %s", protoDir);
         }
     }
 }

@@ -122,6 +122,16 @@ public interface GrpcGatherBuildTimeConfig {
     Optional<String> gitToken();
 
     /**
+     * Optional comma-separated list of Ant-style patterns to exclude from gathering.
+     * <p>
+     * Paths are matched against the relative path of the found {@code .proto} file
+     * (e.g., {@code my/package/exclude.proto}).
+     *
+     * @return the excludes
+     */
+    Optional<String> excludes();
+
+    /**
      * If true, includes Google's well-known types (e.g., {@code any.proto}, {@code timestamp.proto})
      * by extracting them from the {@code com.google.protobuf:protobuf-java} dependency.
      *

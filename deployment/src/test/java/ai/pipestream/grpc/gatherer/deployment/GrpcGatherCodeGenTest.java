@@ -47,16 +47,16 @@ class GrpcGatherCodeGenTest {
         Path proto = sourceDir.resolve("test.proto");
         Files.writeString(proto, "syntax = \"proto3\";");
 
-        Map<String, String> seen = new HashMap<>();
-        int result = codeGen.copySingleProto(proto, Path.of("test.proto"), targetDir, seen);
+        GrpcGatherCodeGen.GatherState state = new GrpcGatherCodeGen.GatherState(targetDir, new HashMap<>(), null);
+        int result = codeGen.copySingleProto(proto, Path.of("test.proto"), targetDir, state, null);
 
         assertEquals(1, result);
         assertTrue(Files.exists(targetDir.resolve("test.proto")));
-        assertEquals(1, seen.size());
-        assertTrue(seen.containsKey("test.proto"));
+        assertEquals(1, state.seenHashes.size());
+        assertTrue(state.seenHashes.containsKey("test.proto"));
 
         // Copy again, should return 0 (already seen and identical)
-        result = codeGen.copySingleProto(proto, Path.of("test.proto"), targetDir, seen);
+        result = codeGen.copySingleProto(proto, Path.of("test.proto"), targetDir, state, null);
         assertEquals(0, result);
     }
     
@@ -72,9 +72,9 @@ class GrpcGatherCodeGenTest {
         Files.createDirectories(proto.getParent());
         Files.writeString(proto, "syntax = \"proto3\";");
 
-        Map<String, String> seen = new HashMap<>();
+        GrpcGatherCodeGen.GatherState state = new GrpcGatherCodeGen.GatherState(targetDir, new HashMap<>(), null);
         // Note: relative path starts with proto/
-        int result = codeGen.copySingleProto(proto, Path.of("proto/test.proto"), targetDir, seen);
+        int result = codeGen.copySingleProto(proto, Path.of("proto/test.proto"), targetDir, state, null);
 
         assertEquals(1, result);
         // Should be stripped of proto/ prefix in target

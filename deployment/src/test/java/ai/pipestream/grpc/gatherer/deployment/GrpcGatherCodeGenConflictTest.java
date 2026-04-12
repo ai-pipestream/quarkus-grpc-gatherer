@@ -21,7 +21,8 @@ class GrpcGatherCodeGenConflictTest {
                 Path.class,
                 Path.class,
                 Path.class,
-                Map.class);
+                GrpcGatherCodeGen.GatherState.class,
+                String.class);
         method.setAccessible(true);
 
         Path temp = Files.createTempDirectory("grpc-gather-conflict");
@@ -33,17 +34,17 @@ class GrpcGatherCodeGenConflictTest {
             Files.writeString(first, firstContent);
             Files.writeString(second, secondContent);
 
-            Map<String, String> seen = new HashMap<>();
             Path targetDir = temp.resolve("out");
             Files.createDirectories(targetDir);
+            GrpcGatherCodeGen.GatherState state = new GrpcGatherCodeGen.GatherState(targetDir, new HashMap<>(), null);
 
             // First one wins
-            method.invoke(codeGen, first, Path.of("demo/v1/conflict.proto"), targetDir, seen);
+            method.invoke(codeGen, first, Path.of("demo/v1/conflict.proto"), targetDir, state, null);
             assertEquals(firstContent, Files.readString(targetDir.resolve("demo/v1/conflict.proto")));
 
             // Second one should not throw but skip
             assertDoesNotThrow(() -> {
-                method.invoke(codeGen, second, Path.of("demo/v1/conflict.proto"), targetDir, seen);
+                method.invoke(codeGen, second, Path.of("demo/v1/conflict.proto"), targetDir, state, null);
             });
             
             // Verify content is still the first one's

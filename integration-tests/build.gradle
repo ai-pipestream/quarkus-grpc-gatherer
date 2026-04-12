@@ -5,7 +5,9 @@ plugins {
 dependencies {
     implementation platform('io.quarkus.platform:quarkus-bom:3.34.3')
     implementation 'io.quarkus:quarkus-arc'
-    implementation 'io.quarkus:quarkus-grpc-stubs'
+    implementation('io.quarkus:quarkus-grpc-stubs') {
+        exclude group: 'io.quarkus', module: 'quarkus-grpc-codegen'
+    }
     implementation 'io.quarkiverse.grpc.zero:quarkus-grpc-zero:0.0.8'
     implementation 'io.grpc:grpc-services:1.72.0'
     
@@ -14,6 +16,11 @@ dependencies {
 
     testImplementation 'io.quarkus:quarkus-junit5'
     testImplementation 'io.rest-assured:rest-assured'
+}
+
+configurations.all {
+    // Avoid split package with quarkus-grpc-protoc-plugin:shaded
+    exclude group: 'io.smallrye.common', module: 'smallrye-common-annotation'
 }
 
 tasks.named('compileJava') {
