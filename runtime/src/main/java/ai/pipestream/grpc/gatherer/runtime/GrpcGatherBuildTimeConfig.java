@@ -26,15 +26,6 @@ public interface GrpcGatherBuildTimeConfig {
     boolean enabled();
 
     /**
-     * If true, existing {@code .proto} files in the target merge directory will be deleted
-     * before gathering new ones.
-     *
-     * @return {@code true} if target should be cleaned
-     */
-    @WithDefault("true")
-    boolean cleanTarget();
-
-    /**
      * Comma-separated list of local filesystem directories to scan for {@code .proto} files.
      * <p>
      * Supports an optional alias prefix: {@code alias=/path/to/protos}.

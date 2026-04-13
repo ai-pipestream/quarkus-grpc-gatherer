@@ -33,27 +33,30 @@ class GrpcGathererProcessor {
     }
 
     /**
-     * Configures the gRPC extension to use the gathered proto files.
-     * <p>
-     * If the gatherer is enabled, this step sets the {@code quarkus.grpc.codegen.proto-directory}
-     * system property to the directory where the protos were merged. It also configures
-     * defaults for {@code grpc-zero} descriptor set generation if enabled.
+     * Emits a build-time log line pointing at the staging directory populated
+     * by {@link GrpcGatherCodeGen}, so users running Quarkus with debug logging
+     * enabled can verify the gatherer ran and find its output.
+     *
+     * <p>There is no automatic wiring into grpc-zero here: the consumer is
+     * expected to declare {@code build/gathered-protos/java} as a Java
+     * source directory so Quarkus's CodeGenerator picks up
+     * {@code build/gathered-protos/proto} via the source-parent mechanism.
      *
      * @param config the gatherer build-time configuration
      * @param outputTarget the output target build item
-     * @param systemProperties the producer for system properties
+     * @param systemProperties unused; kept in the signature in case a future
+     *        version needs to contribute system properties at build time
      */
     @BuildStep
     void configureGrpc(GrpcGatherBuildTimeConfig config,
                        OutputTargetBuildItem outputTarget,
                        BuildProducer<SystemPropertyBuildItem> systemProperties) {
         if (config.enabled()) {
-            // Automatically point gRPC codegen to the gathered proto files if desired.
-            // However, we avoid using System.setProperty here to follow standard Quarkus patterns.
-            // The user should configure 'quarkus.grpc.codegen.proto-directory' in their application.properties.
             Path buildDir = outputTarget.getOutputDirectory();
-            String protoDir = buildDir.resolve("proto-sources").toAbsolutePath().toString();
-            LOG.debugf("gRPC gatherer produced proto files in: %s", protoDir);
+            Path protoDir = buildDir.resolve("gathered-protos").resolve("proto").toAbsolutePath();
+            LOG.debugf("gRPC gatherer staging directory: %s "
+                    + "(add sourceSets.main.java.srcDirs += file(\"$buildDir/gathered-protos/java\") "
+                    + "so quarkus-grpc-zero picks it up)", protoDir);
         }
     }
 }
