@@ -98,6 +98,9 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
      */
     private static final String MANIFEST_FILE = ".gathered-protos-manifest.txt";
 
+    /**
+     * Creates a new instance of {@link GrpcGatherCodeGen}.
+     */
     public GrpcGatherCodeGen() {
     }
 

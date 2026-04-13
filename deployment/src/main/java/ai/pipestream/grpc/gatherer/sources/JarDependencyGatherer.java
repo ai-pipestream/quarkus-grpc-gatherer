@@ -27,6 +27,12 @@ import io.quarkus.runtime.util.HashUtil;
  */
 public final class JarDependencyGatherer implements ProtoGatherer {
 
+    /**
+     * Creates a new instance of {@link JarDependencyGatherer}.
+     */
+    public JarDependencyGatherer() {
+    }
+
     static final String JAR_DEPS = "quarkus.grpc-gather.jar-dependencies";
     static final String JAR_SCAN_ALL = "quarkus.grpc-gather.jar-scan-all";
 

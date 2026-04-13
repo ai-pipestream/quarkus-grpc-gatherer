@@ -21,6 +21,12 @@ import io.quarkus.maven.dependency.ResolvedDependency;
  */
 public final class GoogleWktGatherer implements ProtoGatherer {
 
+    /**
+     * Creates a new instance of {@link GoogleWktGatherer}.
+     */
+    public GoogleWktGatherer() {
+    }
+
     static final String INCLUDE_GOOGLE_WKT = "quarkus.grpc-gather.include-google-wkt";
 
     @Override
