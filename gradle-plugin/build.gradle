@@ -2,6 +2,12 @@ plugins {
     id 'java-gradle-plugin'
     id 'maven-publish'
     id 'signing'
+    // Single-project nmcp variant: contributes a publishAllPublicationsToCentralPortal
+    // task that bundles, signs and uploads to the Maven Central Portal API. The
+    // root build uses the aggregation variant for runtime+deployment, but
+    // gradle-plugin lives in a separate composite-included build that aggregation
+    // does not traverse, so it needs its own single-project nmcp wiring.
+    id 'com.gradleup.nmcp' version '1.4.4'
 }
 
 // Version is synchronised with the parent build via a gradle.properties
@@ -100,5 +106,59 @@ signing {
     if (signingKey && signingPassword) {
         useInMemoryPgpKeys(signingKey, signingPassword)
         sign publishing.publications
+    }
+}
+
+// nmcp single-project Central Portal upload. Same coordinates as the parent
+// aggregation in build.gradle so the gradle-plugin lands at the same Maven
+// Central Portal namespace as the runtime + deployment artifacts. The
+// snapshot URL is pointed at central.sonatype.com explicitly so we land in
+// the Central Portal snapshot bucket rather than the legacy OSSRH one.
+nmcp {
+    publishAllPublicationsToCentralPortal {
+        username = providers.environmentVariable('MAVEN_CENTRAL_USERNAME')
+                .orElse(providers.gradleProperty('mavenCentralUsername'))
+        password = providers.environmentVariable('MAVEN_CENTRAL_PASSWORD')
+                .orElse(providers.gradleProperty('mavenCentralPassword'))
+        publishingType = 'AUTOMATIC'
+        baseUrl = 'https://central.sonatype.com/'
+    }
+}
+
+// Reject snapshot dependencies before any release upload. axion-release's
+// own snapshotDependencies check is broken under Gradle 9 + Quarkus because
+// it iterates every project's every configuration including Quarkus internal
+// Copy configurations that throw "Resolution of the configuration ... was
+// attempted without an exclusive lock". This task only walks compileClasspath
+// and runtimeClasspath of THIS module, which is the only thing that matters
+// for a Maven Central upload.
+tasks.register('verifyNoSnapshotDeps') {
+    group = 'verification'
+    description = 'Fails the build if compile/runtime classpaths contain any external -SNAPSHOT module versions.'
+    doLast {
+        List<String> violations = []
+        ['compileClasspath', 'runtimeClasspath'].each { configName ->
+            Configuration config = configurations.findByName(configName)
+            if (config == null || !config.canBeResolved) {
+                return
+            }
+            config.incoming.resolutionResult.allDependencies.each { dep ->
+                if (!(dep.requested instanceof org.gradle.api.artifacts.component.ModuleComponentSelector)) {
+                    return
+                }
+                if (!(dep.selected.id instanceof org.gradle.api.artifacts.component.ModuleComponentIdentifier)) {
+                    return
+                }
+                String version = dep.selected.id.version
+                if (version.endsWith('-SNAPSHOT')) {
+                    violations << "${project.name}:${configName} -> ${dep.selected.id}"
+                }
+            }
+        }
+        if (!violations.isEmpty()) {
+            throw new GradleException(
+                    "Snapshot dependencies are not allowed for releases (Maven Central rejects them):\n  "
+                            + violations.join('\n  '))
+        }
     }
 }
