@@ -49,37 +49,48 @@ import io.quarkus.paths.PathFilter;
  *       {@code build/gathered-protos-staging/<source>/}.
  *   <li><b>Merge</b>: the staging subdirectories are combined into the
  *       canonical output {@code build/gathered-protos/proto/}, with
- *       content-hash conflict detection. The gatherer also creates an empty
- *       {@code build/gathered-protos/java/} so the consumer's
- *       {@code sourceSets.main.java.srcDirs} addition (see below) does not
- *       resolve to a missing directory.
+ *       content-hash conflict detection.
  * </ol>
  *
- * <h2>Hooking the staged protos into quarkus-grpc-zero</h2>
+ * <h2>Automatic wiring into quarkus-grpc-zero</h2>
  *
- * <p>Consumers wire the staged output into Quarkus code generation by
- * adding one line to their Gradle build script:
+ * <p>This class only owns the <i>gather</i> step. Wiring the staged output
+ * into grpc-zero's code generation is handled by the companion Gradle
+ * plugin, {@code ai.pipestream.quarkus-grpc-gatherer}. When applied the
+ * plugin sets three entries on the Quarkus extension's
+ * {@code quarkusBuildProperties} map (EffectiveConfig source at ordinal
+ * 290, flows into the {@code Map<String,String> properties} Quarkus passes
+ * to every {@code CodeGenProvider.init()} call):
  *
- * <pre>
- *   sourceSets.main.java.srcDirs += file("$buildDir/gathered-protos/java")
- * </pre>
+ * <ul>
+ *   <li>{@code quarkus.grpc.codegen.proto-directory} - absolute path to
+ *       {@code build/gathered-protos/proto}, so grpc-zero's own
+ *       {@code init()} stores it in its {@code input} field and its
+ *       {@code getInputDirectory()} returns it.</li>
+ *   <li>{@code quarkus.generate-code.grpc.descriptor-set.generate=true}
+ *       to enable grpc-zero's {@code FileDescriptorSet} emission.</li>
+ *   <li>{@code quarkus.generate-code.grpc.descriptor-set.name=services.dsc}
+ *       to pin the filename.</li>
+ * </ul>
  *
- * <p>The Quarkus Gradle plugin computes the "source parents" passed to
- * every {@link CodeGenProvider} as {@code Path::getParent} of every Java
- * {@code srcDir} of the main source set (see
- * {@code QuarkusPlugin.getSourcesParents} in Quarkus core). Adding the
- * fake {@code build/gathered-protos/java} srcDir makes
- * {@code build/gathered-protos} a source parent, and grpc-zero's default
- * {@code inputDirectory()="proto"} resolves it to
- * {@code build/gathered-protos/proto} - the exact directory this gatherer
- * just populated. No {@code src/main/proto} mirror, no system properties,
- * no classpath hacks.
+ * <p>Because the properties are in the Map BEFORE any provider's init()
+ * runs, this mechanism is independent of ServiceLoader ordering and does
+ * not care which CodeGenProvider iterates first.
+ * {@link ai.pipestream.grpc.gatherer.deployment.GrpcGathererProcessor}
+ * then reads the descriptor set that grpc-zero wrote at build-item time
+ * and emits it as a {@code GeneratedResourceBuildItem} at
+ * {@code META-INF/grpc/services.dsc}, where pipestream's
+ * {@code GoogleDescriptorLoader} picks it up at runtime.
  *
- * <p>Earlier versions of this extension copied the staged protos into
+ * <p>Maven consumers (where the Gradle plugin does not apply) set the
+ * same three keys explicitly in {@code application.properties} until an
+ * equivalent Maven mechanism exists.
+ *
+ * <p>Earlier versions of this extension copied staged protos into
  * {@code src/main/proto} as a workaround because we mistakenly believed
  * grpc-zero had no way to consume a custom input directory. That workaround
- * is gone: the mirror logic, the manifest file, and the {@code clean-target}
- * config key have all been removed.
+ * is gone, and so are the {@code clean-target} config key and the manifest
+ * file that supported it.
  */
 public class GrpcGatherCodeGen implements CodeGenProvider {
 
@@ -96,13 +107,13 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
 
     /**
      * Build-directory merge target. The canonical output where the gatherer
-     * combines every source into one tree with conflict detection. Consumers
-     * expose this to Quarkus's CodeGenerator by adding
-     * {@code build/gathered-protos/java} as a Java source directory.
+     * combines every source into one tree with conflict detection. The
+     * absolute path to this directory is injected into the shared properties
+     * Map as {@code quarkus.grpc.codegen.proto-directory} so grpc-zero
+     * consumes it automatically with zero Gradle boilerplate.
      */
     private static final String BUILD_TARGET_ROOT = "gathered-protos";
     private static final String BUILD_TARGET_PROTO_SUBDIR = "proto";
-    private static final String BUILD_TARGET_JAVA_SUBDIR = "java";
 
     /**
      * Manifest written into the merge target directory listing every file the
@@ -165,17 +176,12 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
             Path stagedRoot = buildDir.resolve(STAGING_DIR);
             Path buildTargetRoot = buildDir.resolve(BUILD_TARGET_ROOT);
             Path buildTargetDir = buildTargetRoot.resolve(BUILD_TARGET_PROTO_SUBDIR);
-            Path buildTargetJavaDir = buildTargetRoot.resolve(BUILD_TARGET_JAVA_SUBDIR);
             Path workDir = buildDir.resolve("grpc-gather-tmp");
 
             deleteTree(stagedRoot);
             deleteTree(buildTargetDir);
             Files.createDirectories(stagedRoot);
             Files.createDirectories(buildTargetDir);
-            // Empty java dir so consumers can safely declare
-            //   sourceSets.main.java.srcDirs += file("$buildDir/gathered-protos/java")
-            // without Gradle warning about a missing directory.
-            Files.createDirectories(buildTargetJavaDir);
             Files.createDirectories(workDir);
 
             PathFilter excludeFilter = buildExcludeFilter(config);

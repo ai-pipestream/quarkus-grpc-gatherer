@@ -1,0 +1,104 @@
+plugins {
+    id 'java-gradle-plugin'
+    id 'maven-publish'
+    id 'signing'
+}
+
+// Version is synchronised with the parent build via a gradle.properties
+// value written by the root project. When this plugin is consumed as a
+// composite/included build the version is irrelevant (Gradle substitutes by
+// project coordinate); for publishing to Maven Central we set it from the
+// parent's scmVersion.version just before the publish task runs.
+group = 'ai.pipestream'
+version = providers.gradleProperty('quarkusGrpcGathererVersion').getOrElse('0.1.0-SNAPSHOT')
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    withSourcesJar()
+    withJavadocJar()
+}
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+    gradlePluginPortal()
+}
+
+dependencies {
+    // The plugin reaches into io.quarkus.gradle.extension.QuarkusPluginExtension
+    // to set quarkusBuildProperties. Declared compileOnly so consumers of
+    // this plugin do not double-load the Quarkus Gradle plugin - the
+    // consumer's io.quarkus plugin application provides it at runtime.
+    compileOnly 'io.quarkus:gradle-application-plugin:3.34.3'
+}
+
+gradlePlugin {
+    website = 'https://github.com/ai-pipestream/quarkus-grpc-gatherer'
+    vcsUrl = 'https://github.com/ai-pipestream/quarkus-grpc-gatherer'
+    plugins {
+        quarkusGrpcGatherer {
+            id = 'ai.pipestream.quarkus-grpc-gatherer'
+            displayName = 'Quarkus gRPC Gatherer'
+            description = 'Wires quarkus-grpc-gatherer + quarkus-grpc-zero into a Quarkus Gradle build with zero additional boilerplate by configuring Quarkus quarkusBuildProperties at Gradle configuration time.'
+            tags.set(['quarkus', 'grpc', 'protobuf', 'codegen'])
+            implementationClass = 'ai.pipestream.grpc.gatherer.gradle.QuarkusGrpcGathererPlugin'
+        }
+    }
+}
+
+// Publishing: push to GitHub Packages + sign for Maven Central Portal.
+// nmcp aggregation happens in the parent build via
+// publishAllProjectsProbablyBreakingProjectIsolation() so this project's
+// publications are collected automatically when the parent publishes.
+publishing {
+    repositories {
+        mavenLocal()
+        maven {
+            name = 'GitHubPackages'
+            url = uri("https://maven.pkg.github.com/${System.getenv('GITHUB_REPOSITORY') ?: 'ai-pipestream/quarkus-grpc-gatherer'}")
+            credentials {
+                username = findProperty('gpr.user') ?: System.getenv('GITHUB_ACTOR')
+                password = findProperty('gpr.key') ?: System.getenv('GITHUB_TOKEN')
+            }
+        }
+    }
+
+    publications.withType(MavenPublication).configureEach { publication ->
+        publication.pom {
+            name = "quarkus-grpc-gatherer (gradle-plugin)"
+            description = 'Gradle plugin that auto-wires quarkus-grpc-gatherer and quarkus-grpc-zero into a Quarkus build.'
+            url = 'https://github.com/ai-pipestream/quarkus-grpc-gatherer'
+            licenses {
+                license {
+                    name = 'MIT License'
+                    url = 'https://opensource.org/licenses/MIT'
+                }
+            }
+            developers {
+                developer {
+                    id = 'krickert'
+                    name = 'Kristian Rickert'
+                }
+            }
+            scm {
+                connection = 'scm:git:https://github.com/ai-pipestream/quarkus-grpc-gatherer.git'
+                developerConnection = 'scm:git:ssh://git@github.com/ai-pipestream/quarkus-grpc-gatherer.git'
+                url = 'https://github.com/ai-pipestream/quarkus-grpc-gatherer'
+            }
+        }
+    }
+}
+
+signing {
+    def signingKey = System.getenv("GPG_PRIVATE_KEY")
+    def signingPassword = System.getenv("GPG_PASSPHRASE")
+
+    required { signingKey != null }
+
+    if (signingKey && signingPassword) {
+        useInMemoryPgpKeys(signingKey, signingPassword)
+        sign publishing.publications
+    }
+}

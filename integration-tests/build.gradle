@@ -1,5 +1,10 @@
 plugins {
     id 'io.quarkus'
+    // Configures quarkusBuildProperties so grpc-zero reads protos from
+    // build/gathered-protos/proto and emits a descriptor set. Included
+    // from the gradle-plugin/ subproject via settings.gradle's
+    // pluginManagement.includeBuild - no version required.
+    id 'ai.pipestream.quarkus-grpc-gatherer'
 }
 
 dependencies {
@@ -17,52 +22,10 @@ dependencies {
     testImplementation 'io.rest-assured:rest-assured'
 }
 
-// Register build/gathered-protos as an additional Quarkus source parent by
-// declaring its fake /java child as a Java source directory.
-// QuarkusPlugin.getSourcesParents() (core/deployment/.../QuarkusPlugin.java:674)
-// calls Path::getParent on every Java srcDir; the parent of
-// build/gathered-protos/java is build/gathered-protos, which becomes a source
-// parent passed to CodeGenerator. grpc-zero's default inputDirectory()="proto"
-// then resolves to build/gathered-protos/proto - the exact directory
-// GrpcGatherCodeGen.init() just populated. No src/main/proto mirror needed.
-sourceSets {
-    main {
-        java {
-            srcDirs += file("${buildDir}/gathered-protos/java")
-        }
-    }
-}
-
 tasks.named('compileJava') {
     dependsOn 'quarkusGenerateCode'
 }
 
 tasks.named('compileTestJava') {
     dependsOn 'quarkusGenerateCode'
-}
-
-// Route the grpc-zero-generated descriptor set onto the runtime classpath at
-// META-INF/grpc/services.dsc - the default path pipestream's
-// GoogleDescriptorLoader looks up. Consumers that need runtime proto
-// reflection (Apicurio schema registration, dynamic clients, etc.) depend on
-// this convention.
-//
-// Done as a standalone Copy task (not as a processResources.from() block)
-// because Quarkus's quarkusGenerateCode task already depends on
-// processResources - wiring a reverse dep produces a circular task graph.
-// Instead we depend on BOTH processResources and quarkusGenerateCode and
-// hook the output back into `classes`, so our copy lands in
-// build/resources/main/ after processResources has populated it and before
-// the test classpath / jar picks it up.
-def copyGrpcDescriptorToResources = tasks.register('copyGrpcDescriptorToResources', Copy) {
-    dependsOn 'quarkusGenerateCode'
-    dependsOn 'processResources'
-    from(layout.buildDirectory.dir('classes/java/quarkus-generated-sources/grpc')) {
-        include 'services.dsc'
-    }
-    into layout.buildDirectory.dir('resources/main/META-INF/grpc')
-}
-
-tasks.named('classes').configure {
-    dependsOn copyGrpcDescriptorToResources
 }
