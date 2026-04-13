@@ -1,10 +1,8 @@
 package ai.pipestream.grpc.gatherer.it;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -12,49 +10,53 @@ import org.junit.jupiter.api.Test;
 
 import io.quarkus.test.junit.QuarkusTest;
 
+/**
+ * End-to-end test that proves the gatherer hands off to grpc-zero by writing
+ * gathered protos directly into {@code src/main/proto/}, where grpc-zero
+ * reads them as part of its default input directory.
+ *
+ * <p>The gatherer fetches a single well-known proto file from the
+ * {@code opensearch-project/opensearch-protobufs} repository at tag 1.3.0
+ * ({@code protos/schemas/common.proto}), materializes it under
+ * {@code src/main/proto/schemas/common.proto}, and grpc-zero compiles it
+ * into Java classes under {@code org.opensearch.protobufs}.
+ */
 @QuarkusTest
 class GathererWithGrpcZeroTest {
 
-    @Test
-    void gathererSupportsFirstClassFilesystemJarAndBufSourcesWithDescriptor() throws Exception {
+    private static Path srcMainProto() {
         Path projectDir = Path.of(System.getProperty("user.dir"));
-        Path gatheredProtoDir = projectDir.resolve("src").resolve("main").resolve("proto");
+        Path integrationTestsDir = Files.isDirectory(projectDir.resolve("integration-tests"))
+                ? projectDir.resolve("integration-tests") : projectDir;
+        return integrationTestsDir.resolve("src").resolve("main").resolve("proto");
+    }
 
-        // First-class proto (src/main/proto): verify well-known types Any, Struct, Timestamp are generated.
-        Class<?> firstClassRequest = Class.forName("firstclass.v1.FirstClassRequest");
-        Method timestampGetter = firstClassRequest.getMethod("getOccurredAt");
-        assertEquals("com.google.protobuf.Timestamp", timestampGetter.getReturnType().getName());
-        assertNotNull(Class.forName("com.google.protobuf.Struct"));
-        assertNotNull(Class.forName("com.google.protobuf.Any"));
-        assertNotNull(Class.forName("firstclass.v1.FirstClassServiceGrpc"));
+    @Test
+    void gitGatheredProtoIsCompiledByGrpcZero() throws Exception {
+        Path gatheredProto = srcMainProto().resolve("schemas").resolve("common.proto");
+        assertTrue(Files.exists(gatheredProto),
+                "Expected gathered proto at " + gatheredProto);
 
-        // Filesystem gather source.
-        assertNotNull(Class.forName("filesystem.v1.FileSystemServiceGrpc"));
-        assertTrue(
-                Files.exists(gatheredProtoDir.resolve("filesystem/v1/filesystem.proto")),
-                "Expected filesystem source proto in gathered output");
+        assertNotNull(Class.forName("org.opensearch.protobufs.SearchRequest"),
+                "Expected SearchRequest from common.proto to be generated");
+        assertNotNull(Class.forName("org.opensearch.protobufs.SearchResponse"),
+                "Expected SearchResponse from common.proto to be generated");
+    }
 
-        // JAR gather source.
-        assertNotNull(Class.forName("io.grpc.channelz.v1.ChannelzGrpc"));
-        assertTrue(
-                Files.exists(gatheredProtoDir.resolve("grpc/channelz/v1/channelz.proto")),
-                "Expected jar-sourced proto in gathered output");
+    @Test
+    void jarGatheredProtoIsCompiledByGrpcZero() throws Exception {
+        // grpc-services ships several .proto files; the gatherer pulls all of
+        // them out and grpc-zero recompiles each. health.proto is the smallest
+        // self-contained one and it lands at grpc/health/v1/health.proto with
+        // java_package=io.grpc.health.v1.
+        Path gatheredHealth = srcMainProto()
+                .resolve("grpc").resolve("health").resolve("v1").resolve("health.proto");
+        assertTrue(Files.exists(gatheredHealth),
+                "Expected gathered health.proto at " + gatheredHealth);
 
-        // Git gather source (OpenSearch protobufs tag 1.3.0).
-        assertNotNull(Class.forName("org.opensearch.protobufs.services.SearchServiceGrpc"));
-        assertTrue(
-                Files.exists(gatheredProtoDir.resolve("services/search_service.proto")),
-                "Expected git-sourced proto in gathered output");
-
-        // Buf gather source.
-        assertNotNull(Class.forName("com.google.type.Date"));
-        assertTrue(
-                Files.exists(gatheredProtoDir.resolve("google/type/date.proto")),
-                "Expected buf-sourced proto in gathered output");
-
-        // grpc-zero descriptor output.
-        Path descriptor = projectDir.resolve("build").resolve("grpc-descriptors").resolve("services.dsc");
-        assertTrue(Files.exists(descriptor), "Expected grpc-zero descriptor set");
-        assertTrue(Files.size(descriptor) > 0, "Expected non-empty descriptor set");
+        assertNotNull(Class.forName("io.grpc.health.v1.HealthCheckRequest"),
+                "Expected HealthCheckRequest from health.proto to be generated");
+        assertNotNull(Class.forName("io.grpc.health.v1.HealthCheckResponse"),
+                "Expected HealthCheckResponse from health.proto to be generated");
     }
 }

@@ -10,9 +10,8 @@ It is designed to pair with [`quarkus-grpc-zero`](https://github.com/quarkiverse
   - filesystem directories
   - dependency jars
   - a git repository/subdirectory
-  - a Buf module (`buf export`)
 - merges into Quarkus proto input directory (`src/main/proto`)
-- deduplicates identical files and fails fast on conflicting content for the same relative path
+- deduplicates identical files and warns on conflicting content for the same relative path (first one wins)
 
 ## Configuration
 
@@ -32,8 +31,6 @@ All keys are build-time and use the `quarkus.grpc-gather.*` prefix.
 | `quarkus.grpc-gather.git-username` | Git username for authenticated clone | unset |
 | `quarkus.grpc-gather.git-password` | Git password/token paired with username | unset |
 | `quarkus.grpc-gather.git-token` | Git token (uses `x-access-token` auth) | unset |
-| `quarkus.grpc-gather.buf-module` | Buf module (e.g. `buf.build/org/mod`) | unset |
-| `quarkus.grpc-gather.buf-paths` | Comma-separated `--path` filters for `buf export` | unset |
 
 ## Gradle usage
 
@@ -68,12 +65,15 @@ quarkus.grpc-gather.jar-dependencies=com.google.api.grpc:proto-google-common-pro
 
 ## Descriptor generation (grpc-zero)
 
-Use grpc-zero settings to emit descriptor sets:
+When `enabled=true`, the gatherer automatically configures `quarkus.generate-code.grpc.proto-directory` to point to its gathered outputs, making it "just work" with `grpc-zero`.
+
+Optional descriptor sets can also be automatically configured:
 
 ```properties
 quarkus.generate-code.grpc.descriptor-set.generate=true
-quarkus.generate-code.grpc.descriptor-set.output-dir=${user.dir}/build/grpc-descriptors
-quarkus.generate-code.grpc.descriptor-set.name=services.dsc
+# Optional: override automatic defaults
+# quarkus.generate-code.grpc.descriptor-set.output-dir=${user.dir}/build/grpc-descriptors
+# quarkus.generate-code.grpc.descriptor-set.name=services.dsc
 ```
 
 ## Build

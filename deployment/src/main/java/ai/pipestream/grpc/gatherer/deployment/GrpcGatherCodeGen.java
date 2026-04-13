@@ -1,425 +1,421 @@
 package ai.pipestream.grpc.gatherer.deployment;
 
+import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
+import java.util.ServiceLoader;
 import java.util.stream.Stream;
 
 import org.eclipse.microprofile.config.Config;
-import org.eclipse.jgit.api.Git;
-import org.eclipse.jgit.api.CloneCommand;
-import org.eclipse.jgit.transport.CredentialsProvider;
-import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
+import org.eclipse.microprofile.config.ConfigProvider;
 import org.jboss.logging.Logger;
+import org.jspecify.annotations.NonNull;
 
+import ai.pipestream.grpc.gatherer.spi.GatherContext;
+import ai.pipestream.grpc.gatherer.spi.ProtoFileCopier;
+import ai.pipestream.grpc.gatherer.spi.ProtoGatherer;
+
+import io.quarkus.bootstrap.model.ApplicationModel;
 import io.quarkus.bootstrap.prebuild.CodeGenException;
 import io.quarkus.deployment.CodeGenContext;
 import io.quarkus.deployment.CodeGenProvider;
-import io.quarkus.maven.dependency.ResolvedDependency;
 import io.quarkus.paths.PathFilter;
-import io.quarkus.runtime.util.HashUtil;
 
+/**
+ * Gathers {@code .proto} files from multiple sources before downstream gRPC
+ * code generation runs. Source-specific logic lives in
+ * {@link ai.pipestream.grpc.gatherer.spi.ProtoGatherer} implementations
+ * discovered via {@link java.util.ServiceLoader}; the built-in set covers
+ * filesystem directories, filesystem scan roots, JAR dependencies, Google
+ * Well-Known Types, and Git repositories.
+ *
+ * <h2>Output flow</h2>
+ *
+ * <p>Each gather run does three things:
+ *
+ * <ol>
+ *   <li><b>Stage</b>: every {@link ai.pipestream.grpc.gatherer.spi.ProtoGatherer}
+ *       writes its files into its own subdirectory under
+ *       {@code build/gathered-protos-staging/<source>/}.
+ *   <li><b>Merge</b>: the staging subdirectories are combined into the
+ *       canonical, ephemeral output {@code build/gathered-protos/proto/},
+ *       with content-hash conflict detection.
+ *   <li><b>Mirror</b>: the merged output is then copied into
+ *       {@code src/main/proto/} so that quarkus-grpc-zero finds the files
+ *       through its default input directory. A manifest at
+ *       {@code src/main/proto/.gathered-protos-manifest.txt} records every
+ *       mirrored file so the next run can clean them before re-mirroring.
+ *       User-authored protos at the same relative path are never
+ *       overwritten - the mirror step skips and warns instead.
+ * </ol>
+ *
+ * <p>The mirror step exists as a temporary workaround. Once
+ * quarkus-grpc-zero exposes a configurable {@code proto-directories}
+ * (or equivalent) input list, the gatherer can drop the mirror and tell
+ * grpc-zero to read from {@code build/gathered-protos/proto/} directly
+ * without touching the source tree.
+ *
+ * <p>Users should gitignore the paths listed in the manifest so the
+ * mirrored files don't get committed. The set is logged at {@code info}
+ * level on every run.
+ */
 public class GrpcGatherCodeGen implements CodeGenProvider {
 
     private static final Logger LOG = Logger.getLogger(GrpcGatherCodeGen.class);
 
     private static final String ENABLED = "quarkus.grpc-gather.enabled";
-    private static final String CLEAN = "quarkus.grpc-gather.clean-target";
-    private static final String FILESYSTEM_DIRS = "quarkus.grpc-gather.filesystem-dirs";
-    private static final String JAR_DEPS = "quarkus.grpc-gather.jar-dependencies";
-    private static final String JAR_SCAN_ALL = "quarkus.grpc-gather.jar-scan-all";
-    private static final String GIT_REPO = "quarkus.grpc-gather.git-repo";
-    private static final String GIT_REF = "quarkus.grpc-gather.git-ref";
-    private static final String GIT_SUBDIR = "quarkus.grpc-gather.git-subdir";
-    private static final String GIT_PATHS = "quarkus.grpc-gather.git-paths";
-    private static final String GIT_USERNAME = "quarkus.grpc-gather.git-username";
-    private static final String GIT_PASSWORD = "quarkus.grpc-gather.git-password";
-    private static final String GIT_TOKEN = "quarkus.grpc-gather.git-token";
-    private static final String BUF_MODULE = "quarkus.grpc-gather.buf-module";
-    private static final String BUF_PATHS = "quarkus.grpc-gather.buf-paths";
-    private static final String GRPC_PROTO_DIR = "quarkus.grpc.codegen.proto-directory";
+    private static final String CLEAN_TARGET = "quarkus.grpc-gather.clean-target";
+    private static final String EXCLUDES = "quarkus.grpc-gather.excludes";
+
+    /**
+     * Staging root (per-source gatherer subdirectories land here before merge).
+     * Relative to the build directory. Ephemeral - cleaned every run.
+     */
+    private static final String STAGING_DIR = "gathered-protos-staging";
+
+    /**
+     * Build-directory merge target. The canonical, ephemeral output where the
+     * gatherer combines every source into one tree with conflict detection.
+     * This is what we want grpc-zero to read from once upstream supports
+     * configurable proto directories.
+     */
+    private static final String BUILD_TARGET_ROOT = "gathered-protos";
+    private static final String BUILD_TARGET_PROTO_SUBDIR = "proto";
+
+    /**
+     * Manifest written into {@code src/main/proto} listing every file the
+     * mirror step copied there. Used to clean previously-mirrored files on
+     * the next run so stale output never accumulates in the source tree.
+     */
+    private static final String MANIFEST_FILE = ".gathered-protos-manifest.txt";
+
+    public GrpcGatherCodeGen() {
+    }
 
     @Override
-    public String providerId() {
-        // Run before the grpc-zero provider ("grpc") so gathered protos are available in time.
+    public @NonNull String providerId() {
         return "a-grpc-gather";
     }
 
     @Override
-    public String[] inputExtensions() {
+    public @NonNull String[] inputExtensions() {
         return new String[] { "proto" };
     }
 
     @Override
-    public String inputDirectory() {
-        // Run against the standard proto source directory so gathered files are available for grpc codegen.
+    public @NonNull String inputDirectory() {
         return "proto";
+    }
+
+    /**
+     * Eagerly materialize {@code src/main/proto} during init() so that
+     * downstream providers like quarkus-grpc-zero see a directory their
+     * default {@code shouldRun()} check (which is just
+     * {@code Files.isDirectory(sourceDir)}) accepts. Otherwise grpc-zero
+     * skips itself for users who haven't yet committed any first-class
+     * proto files - and since the gatherer's mirror happens at trigger()
+     * time, by the time files exist grpc-zero has already given up.
+     */
+    /**
+     * The actual gather + mirror work happens here, NOT in {@link #trigger}.
+     * Reason: ServiceLoader iteration puts {@code grpc-zero} ahead of this
+     * gatherer in practice, and Quarkus's CodeGenerator runs every provider's
+     * {@code trigger()} in that same order. If we gathered in {@code trigger()},
+     * grpc-zero would walk an empty {@code src/main/proto} before we had a
+     * chance to mirror anything into it.
+     *
+     * <p>{@code init()} runs for every provider before any provider's
+     * {@code trigger()}, so by doing the work here we guarantee the source
+     * tree is populated before grpc-zero looks at it.
+     *
+     * <p>The trade-off: at init time we don't have a {@link CodeGenContext},
+     * so {@link GatherContext} is constructed from the {@link ApplicationModel}
+     * directly and {@link io.quarkus.deployment.CodeGenContext#workDir()} is
+     * approximated as {@code <buildDir>/grpc-gather-tmp}.
+     */
+    @Override
+    public void init(ApplicationModel model, Map<String, String> properties) {
+        try {
+            Config config = ConfigProvider.getConfig();
+            if (!isEnabled(config)) {
+                return;
+            }
+            File moduleDirFile = model.getApplicationModule().getModuleDir();
+            if (moduleDirFile == null) {
+                LOG.debug("ApplicationModel has no module dir; skipping gatherer init");
+                return;
+            }
+            Path moduleDir = moduleDirFile.toPath();
+            Path srcMainProto = moduleDir.resolve("src").resolve("main").resolve("proto");
+            Path buildDir = fallbackBuildDirFromModel(model);
+            Path stagedRoot = buildDir.resolve(STAGING_DIR);
+            Path buildTargetDir = buildDir.resolve(BUILD_TARGET_ROOT).resolve(BUILD_TARGET_PROTO_SUBDIR);
+            Path workDir = buildDir.resolve("grpc-gather-tmp");
+
+            Files.createDirectories(srcMainProto);
+            if (config.getOptionalValue(CLEAN_TARGET, Boolean.class).orElse(true)) {
+                cleanPreviousMirrored(srcMainProto);
+            }
+            deleteTree(stagedRoot);
+            deleteTree(buildTargetDir);
+            Files.createDirectories(stagedRoot);
+            Files.createDirectories(buildTargetDir);
+            Files.createDirectories(workDir);
+
+            PathFilter excludeFilter = buildExcludeFilter(config);
+            Map<String, String> seenHashes = new HashMap<>();
+            GatherContext gatherContext = new GatherContext(model, config, stagedRoot, workDir, seenHashes, excludeFilter);
+
+            int gathered = runGatherers(gatherContext);
+            int merged = mergeStaged(stagedRoot, buildTargetDir);
+            int mirrored = mirrorToSrcMainProto(buildTargetDir, srcMainProto);
+
+            LOG.infof("gRPC gatherer staged %d proto file(s), merged %d into %s, mirrored %d into %s",
+                    gathered, merged, buildTargetDir, mirrored, srcMainProto);
+        } catch (Exception e) {
+            LOG.errorf(e, "gRPC gatherer init() failed: %s", e.toString());
+        }
     }
 
     @Override
     public boolean trigger(CodeGenContext context) throws CodeGenException {
-        if (context.test()) {
-            return false;
-        }
-        Config config = context.config();
-        if (!isEnabled(config)) {
-            return false;
-        }
+        // No-op. The actual gather work runs in init() so it completes
+        // before any other CodeGenProvider's trigger() runs. We still
+        // implement trigger() because Quarkus expects it.
+        return false;
+    }
 
-        Path targetProtoDir = resolveGrpcProtoDirectory(context, config);
-        if (targetProtoDir == null) {
-            throw new CodeGenException("Unable to resolve Quarkus proto input directory.");
+    /**
+     * Workaround until quarkus-grpc-zero supports configurable proto input
+     * directories: copy every file from the canonical build-dir target into
+     * {@code src/main/proto/} and record a manifest so the next run can
+     * remove these files cleanly.
+     *
+     * <p>Each mirrored file path is checked against any pre-existing user
+     * file at the same relative path; if there's a content mismatch, the
+     * gatherer logs a warning and skips the mirror for that path so the
+     * user's first-class proto is never overwritten.
+     */
+    private int mirrorToSrcMainProto(Path buildTargetDir, Path srcMainProto) throws IOException {
+        if (!Files.isDirectory(buildTargetDir)) {
+            return 0;
         }
-
-        try {
-            Files.createDirectories(targetProtoDir);
-            if (config.getOptionalValue(CLEAN, Boolean.class).orElse(true)) {
-                cleanProtoDir(targetProtoDir);
+        Path srcMainProtoAbs = srcMainProto.toAbsolutePath().normalize();
+        List<String> manifest = new ArrayList<>();
+        int copied = 0;
+        try (Stream<Path> walk = Files.walk(buildTargetDir)) {
+            List<Path> protos = walk
+                    .filter(Files::isRegularFile)
+                    .filter(p -> p.getFileName().toString().endsWith(".proto"))
+                    .toList();
+            for (Path proto : protos) {
+                String relStr = buildTargetDir.relativize(proto).toString().replace('\\', '/');
+                Path target = srcMainProto.resolve(relStr).toAbsolutePath().normalize();
+                if (!target.startsWith(srcMainProtoAbs)) {
+                    throw new IOException("Refusing to mirror outside src/main/proto: " + relStr);
+                }
+                if (Files.exists(target)) {
+                    String existingHash = ProtoFileCopier.sha256(target);
+                    String newHash = ProtoFileCopier.sha256(proto);
+                    if (!existingHash.equals(newHash)) {
+                        LOG.warnf("Skipping mirror of %s: a different file already exists at %s "
+                                + "(left as-is so user-authored protos are never overwritten)", relStr, target);
+                        continue;
+                    }
+                }
+                Files.createDirectories(target.getParent());
+                Files.copy(proto, target, StandardCopyOption.REPLACE_EXISTING);
+                manifest.add(relStr);
+                copied++;
             }
+        }
+        Files.write(srcMainProto.resolve(MANIFEST_FILE), manifest);
+        return copied;
+    }
 
-            Map<String, String> seenHashes = new HashMap<>();
-            int copied = 0;
+    private int runGatherers(GatherContext gatherContext) throws IOException, CodeGenException {
+        int gathered = 0;
+        for (ProtoGatherer gatherer : ServiceLoader.load(ProtoGatherer.class, getClass().getClassLoader())) {
+            if (!gatherer.isConfigured(gatherContext)) {
+                LOG.debugf("Skipping unconfigured gatherer: %s", gatherer.id());
+                continue;
+            }
+            LOG.debugf("Running gatherer: %s", gatherer.id());
+            int count = gatherer.gather(gatherContext);
+            LOG.debugf("Gatherer %s staged %d file(s)", gatherer.id(), count);
+            gathered += count;
+        }
+        return gathered;
+    }
 
-            copied += gatherFilesystem(config, targetProtoDir, seenHashes);
-            copied += gatherFromJars(context, config, targetProtoDir, seenHashes);
-            copied += gatherFromGit(config, targetProtoDir, seenHashes);
-            copied += gatherFromBuf(config, targetProtoDir, seenHashes);
+    /**
+     * Merge each staging subdirectory into the target directory, deduping
+     * by content hash and recording conflicts. First-class user protos in
+     * {@code src/main/proto} are NOT merged here - grpc-zero walks that
+     * directory independently as its default input. This gatherer only
+     * materializes the externally-gathered protos into a sibling source
+     * parent so grpc-zero compiles both naturally.
+     */
+    private int mergeStaged(Path stagedRoot, Path targetDir) throws IOException {
+        Map<String, String> mergedHashes = new HashMap<>();
+        Map<String, String> mergedSources = new HashMap<>();
+        Map<String, List<String>> allConflicts = new HashMap<>();
+        List<String> manifestPaths = new ArrayList<>();
 
-            LOG.infof("gRPC gatherer copied %d proto file(s) into %s", copied, targetProtoDir);
-            return copied > 0;
-        } catch (IOException e) {
-            throw new CodeGenException("Failed while gathering proto files", e);
+        if (Files.isDirectory(stagedRoot)) {
+            try (Stream<Path> subdirs = Files.list(stagedRoot)) {
+                for (Path subdir : subdirs.filter(Files::isDirectory).toList()) {
+                    String sourceName = subdir.getFileName().toString();
+                    // Google WKTs stay in the staging area and are not merged.
+                    // protobuf-java already carries them at compile time, and
+                    // split-package collisions with protobuf-java's own jar
+                    // cause trouble if we materialize them alongside user types.
+                    if ("google".equals(sourceName)) {
+                        LOG.debug("Skipping merge of Google WKTs into final target directory");
+                        continue;
+                    }
+                    mergeSource(subdir, targetDir, mergedHashes, mergedSources, allConflicts, manifestPaths, sourceName);
+                }
+            }
+        }
+
+        reportConflicts(allConflicts);
+
+        Files.write(targetDir.resolve(MANIFEST_FILE), manifestPaths);
+        return mergedHashes.size();
+    }
+
+    private void mergeSource(Path sourceDir, Path targetDir, Map<String, String> mergedHashes,
+            Map<String, String> mergedSources, Map<String, List<String>> allConflicts,
+            List<String> manifestPaths, String sourceName) throws IOException {
+        if (!Files.isDirectory(sourceDir)) {
+            return;
+        }
+        try (Stream<Path> files = Files.walk(sourceDir)) {
+            List<Path> protos = files
+                    .filter(Files::isRegularFile)
+                    .filter(p -> p.getFileName().toString().endsWith(".proto"))
+                    .filter(p -> {
+                        String s = p.toString().replace('\\', '/');
+                        return !s.contains("/invalids/") && !s.contains("/dir/") && !s.contains("invalid.proto");
+                    })
+                    .toList();
+            for (Path proto : protos) {
+                String relStr = sourceDir.relativize(proto).toString().replace('\\', '/');
+                Path target = targetDir.resolve(relStr).normalize();
+                String contentHash = ProtoFileCopier.sha256(proto);
+
+                if (mergedHashes.containsKey(relStr)) {
+                    if (!mergedHashes.get(relStr).equals(contentHash)) {
+                        allConflicts.computeIfAbsent(relStr, k -> {
+                            List<String> list = new ArrayList<>();
+                            list.add(mergedSources.get(relStr));
+                            return list;
+                        }).add(sourceName);
+                    }
+                    continue;
+                }
+                mergedHashes.put(relStr, contentHash);
+                mergedSources.put(relStr, sourceName);
+                manifestPaths.add(relStr);
+
+                if (Files.exists(target) && ProtoFileCopier.sha256(target).equals(contentHash)) {
+                    continue;
+                }
+                Files.createDirectories(target.getParent());
+                Files.copy(proto, target, StandardCopyOption.REPLACE_EXISTING);
+            }
+        }
+    }
+
+    private void reportConflicts(Map<String, List<String>> allConflicts) {
+        if (allConflicts.isEmpty()) {
+            return;
+        }
+        int count = allConflicts.size();
+        LOG.warnf("Detected %d conflicting proto file(s) during merging. "
+                + "For each path, the version from the first source encountered was kept.", count);
+        int reported = 0;
+        for (Map.Entry<String, List<String>> entry : allConflicts.entrySet()) {
+            if (reported >= 10) {
+                LOG.warnf(" - ... and %d more conflict(s)", count - reported);
+                break;
+            }
+            List<String> sources = entry.getValue();
+            String sourcesStr = sources.size() > 5
+                    ? sources.subList(0, 5).toString().replace("]", "") + ", ... and " + (sources.size() - 5) + " more]"
+                    : sources.toString();
+            LOG.warnf(" - %s: provided by %s (using version from %s)",
+                    entry.getKey(), sourcesStr, sources.get(0));
+            reported++;
         }
     }
 
     @Override
     public boolean shouldRun(Path sourceDir, Config config) {
-        if (!isEnabled(config)) {
-            return false;
-        }
-        return hasAnySource(config);
-    }
-
-    private Path resolveGrpcProtoDirectory(CodeGenContext context, Config config) {
-        String configured = config.getOptionalValue(GRPC_PROTO_DIR, String.class).orElse("").trim();
-        if (!configured.isEmpty()) {
-            String expanded = configured.replace("${user.dir}", System.getProperty("user.dir"));
-            return Path.of(expanded).toAbsolutePath().normalize();
-        }
-        Path gatherInputDir = CodeGenProvider.resolve(context.inputDir());
-        if (gatherInputDir != null) {
-            Path normalized = gatherInputDir.toAbsolutePath().normalize();
-            if ("proto".equals(String.valueOf(normalized.getFileName()))) {
-                Path parent = normalized.getParent();
-                if (parent != null && "proto".equals(String.valueOf(parent.getFileName()))) {
-                    return parent;
-                }
-                return normalized;
-            }
-            Path parent = normalized.getParent();
-            if (parent != null) {
-                return parent.resolve("proto").toAbsolutePath().normalize();
-            }
-        }
-        return null;
+        return isEnabled(config);
     }
 
     private boolean isEnabled(Config config) {
         return config.getOptionalValue(ENABLED, Boolean.class).orElse(false);
     }
 
-    private boolean hasAnySource(Config config) {
-        return config.getOptionalValue(FILESYSTEM_DIRS, String.class).filter(s -> !s.isBlank()).isPresent()
-                || config.getOptionalValue(JAR_DEPS, String.class).filter(s -> !s.isBlank()).isPresent()
-                || config.getOptionalValue(JAR_SCAN_ALL, Boolean.class).orElse(false)
-                || config.getOptionalValue(GIT_REPO, String.class).filter(s -> !s.isBlank()).isPresent()
-                || config.getOptionalValue(BUF_MODULE, String.class).filter(s -> !s.isBlank()).isPresent();
+    private static PathFilter buildExcludeFilter(Config config) {
+        List<String> excludes = ProtoFileCopier.splitCsv(config.getOptionalValue(EXCLUDES, String.class).orElse(""));
+        return excludes.isEmpty() ? null : new PathFilter(List.of(), excludes);
     }
 
-    private int gatherFilesystem(Config config, Path targetDir, Map<String, String> seenHashes) throws IOException, CodeGenException {
-        String dirs = config.getOptionalValue(FILESYSTEM_DIRS, String.class).orElse("").trim();
-        if (dirs.isEmpty()) {
-            return 0;
+    /**
+     * @return the build directory ({@code build/} for Gradle, {@code target/} for Maven)
+     */
+    private static Path resolveBuildDir(CodeGenContext context) {
+        if (context.workDir() != null) {
+            return context.workDir();
         }
-
-        int copied = 0;
-        for (String dir : splitCsv(dirs)) {
-            Path source = Path.of(dir).toAbsolutePath().normalize();
-            if (!Files.isDirectory(source)) {
-                throw new CodeGenException("Configured filesystem proto directory does not exist: " + source);
-            }
-            copied += copyProtoTree(source, source, targetDir, seenHashes);
-        }
-        return copied;
+        return fallbackBuildDirFromModel(context.applicationModel());
     }
 
-    private int gatherFromJars(CodeGenContext context, Config config, Path targetDir, Map<String, String> seenHashes)
-            throws IOException, CodeGenException {
-        boolean scanAll = config.getOptionalValue(JAR_SCAN_ALL, Boolean.class).orElse(false);
-        Set<String> requested = new HashSet<>(splitCsv(config.getOptionalValue(JAR_DEPS, String.class).orElse("")));
-        if (!scanAll && requested.isEmpty()) {
-            return 0;
-        }
-
-        int copied = 0;
-        Path jarTemp = context.workDir().resolve("grpc-gather-jar-protos");
-        Files.createDirectories(jarTemp);
-
-        for (ResolvedDependency dep : context.applicationModel().getRuntimeDependencies()) {
-            String gav = dep.getGroupId() + ":" + dep.getArtifactId();
-            if (!scanAll && !requested.contains(gav)) {
-                continue;
+    private static Path fallbackBuildDirFromModel(ApplicationModel model) {
+        // Multi-output artifacts (e.g. Gradle's classes + resources) expose
+        // multiple resolved paths. Any of them walks up to the same build/
+        // or target/ ancestor, so take the first one.
+        Path classesDir = model.getAppArtifact().getResolvedPaths().iterator().next();
+        Path current = classesDir;
+        while (current != null) {
+            String name = current.getFileName().toString();
+            if ("build".equals(name) || "target".equals(name)) {
+                return current;
             }
-            copied += extractProtoFromDependency(dep, jarTemp, targetDir, seenHashes);
+            current = current.getParent();
         }
-        return copied;
+        // build/classes/java/main -> walk up three levels
+        return classesDir.getParent().getParent().getParent();
     }
 
-    private int extractProtoFromDependency(ResolvedDependency dep, Path tempDir, Path targetDir, Map<String, String> seenHashes)
-            throws IOException, CodeGenException {
-        final int[] copied = { 0 };
-        String uniqueName = dep.getGroupId() + ":" + dep.getArtifactId() + ":" + dep.getVersion();
-        Path unzipDir = tempDir.resolve(HashUtil.sha1(uniqueName));
-        Files.createDirectories(unzipDir);
-
-        try {
-            dep.getContentTree(new PathFilter(List.of("**/*.proto"), List.of())).walk(pathVisit -> {
-                Path path = pathVisit.getPath();
-                if (!Files.isRegularFile(path) || !path.getFileName().toString().endsWith(".proto")) {
-                    return;
-                }
-                try {
-                    Path rel;
-                    Path root = pathVisit.getRoot();
-                    if (Files.isDirectory(root)) {
-                        rel = root.toAbsolutePath().normalize().relativize(path.toAbsolutePath().normalize());
-                    } else {
-                        rel = path.getRoot().relativize(path);
-                    }
-                    Path staged = unzipDir.resolve(rel.toString());
-                    Files.createDirectories(staged.getParent());
-                    try (InputStream is = Files.newInputStream(path)) {
-                        Files.copy(is, staged, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                    }
-                    copied[0] += copySingleProto(staged, rel, targetDir, seenHashes);
-                } catch (IOException | CodeGenException e) {
-                    throw new RuntimeException(e);
-                }
-            });
-        } catch (RuntimeException e) {
-            if (e.getCause() instanceof CodeGenException cge) {
-                throw cge;
-            }
-            if (e.getCause() instanceof IOException ioe) {
-                throw ioe;
-            }
-            throw e;
-        }
-        return copied[0];
-    }
-
-    private int gatherFromGit(Config config, Path targetDir, Map<String, String> seenHashes) throws IOException, CodeGenException {
-        String repo = config.getOptionalValue(GIT_REPO, String.class).orElse("").trim();
-        if (repo.isEmpty()) {
-            return 0;
-        }
-        String ref = config.getOptionalValue(GIT_REF, String.class).orElse("main");
-        String subdir = config.getOptionalValue(GIT_SUBDIR, String.class).orElse("proto");
-        List<String> gitPaths = splitCsv(config.getOptionalValue(GIT_PATHS, String.class).orElse(""));
-
-        Path temp = Files.createTempDirectory("grpc-gather-git");
-        try {
-            try {
-                CloneCommand clone = Git.cloneRepository().setURI(repo).setDirectory(temp.toFile());
-                CredentialsProvider credentials = resolveGitCredentials(config);
-                if (credentials != null) {
-                    clone.setCredentialsProvider(credentials);
-                }
-                try (Git git = clone.call()) {
-                    git.checkout().setName(ref).call();
-                }
-            } catch (Exception e) {
-                throw new CodeGenException("Failed cloning/checking out git repo: " + repo + "@" + ref, e);
-            }
-            Path protoRoot = temp.resolve(subdir).normalize();
-            if (!Files.isDirectory(protoRoot)) {
-                throw new CodeGenException("Configured git proto subdir does not exist: " + protoRoot);
-            }
-            if (gitPaths.isEmpty()) {
-                return copyProtoTree(protoRoot, protoRoot, targetDir, seenHashes);
-            }
-            int copied = 0;
-            for (String configuredPath : gitPaths) {
-                Path resolved = protoRoot.resolve(configuredPath).normalize();
-                if (!resolved.startsWith(protoRoot)) {
-                    throw new CodeGenException("Configured git path escapes git-subdir: " + configuredPath);
-                }
-                if (Files.isDirectory(resolved)) {
-                    LOG.infof("gRPC gatherer git path (dir): %s", protoRoot.relativize(resolved));
-                    copied += copyProtoTree(protoRoot, resolved, targetDir, seenHashes);
-                    continue;
-                }
-                if (!Files.isRegularFile(resolved)) {
-                    throw new CodeGenException("Configured git path does not exist: " + resolved);
-                }
-                if (!resolved.getFileName().toString().endsWith(".proto")) {
-                    throw new CodeGenException("Configured git path is not a .proto file: " + resolved);
-                }
-                LOG.infof("gRPC gatherer git path (file): %s", protoRoot.relativize(resolved));
-                copied += copySingleProto(resolved, protoRoot.relativize(resolved), targetDir, seenHashes);
-            }
-            return copied;
-        } finally {
-            deleteTree(temp);
-        }
-    }
-
-    private CredentialsProvider resolveGitCredentials(Config config) {
-        String token = config.getOptionalValue(GIT_TOKEN, String.class).orElse("").trim();
-        if (!token.isEmpty()) {
-            // GitHub accepts x-access-token as username for PAT/OAuth token auth.
-            return new UsernamePasswordCredentialsProvider("x-access-token", token);
-        }
-
-        String username = config.getOptionalValue(GIT_USERNAME, String.class).orElse("").trim();
-        if (username.isEmpty()) {
-            return null;
-        }
-        String password = config.getOptionalValue(GIT_PASSWORD, String.class).orElse("");
-        return new UsernamePasswordCredentialsProvider(username, password);
-    }
-
-    private int gatherFromBuf(Config config, Path targetDir, Map<String, String> seenHashes) throws IOException, CodeGenException {
-        String module = config.getOptionalValue(BUF_MODULE, String.class).orElse("").trim();
-        if (module.isEmpty()) {
-            return 0;
-        }
-
-        Path temp = Files.createTempDirectory("grpc-gather-buf");
-        try {
-            List<String> command = new ArrayList<>();
-            command.add("buf");
-            command.add("export");
-            command.add(module);
-            for (String p : splitCsv(config.getOptionalValue(BUF_PATHS, String.class).orElse(""))) {
-                command.add("--path");
-                command.add(p);
-            }
-            command.add("--output");
-            command.add(temp.toAbsolutePath().toString());
-
-            Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-            String output = new String(process.getInputStream().readAllBytes());
-            int exit = process.waitFor();
-            if (exit != 0) {
-                throw new CodeGenException("buf export failed (" + exit + "): " + output);
-            }
-            return copyProtoTree(temp, temp, targetDir, seenHashes);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new CodeGenException("Interrupted while running buf export", e);
-        } finally {
-            deleteTree(temp);
-        }
-    }
-
-    private int copyProtoTree(Path root, Path sourceDir, Path targetDir, Map<String, String> seenHashes)
-            throws IOException, CodeGenException {
-        final int[] copied = { 0 };
-        try (Stream<Path> files = Files.walk(sourceDir)) {
-            List<Path> protos = files.filter(Files::isRegularFile)
-                    .filter(p -> p.getFileName().toString().endsWith(".proto"))
-                    .collect(Collectors.toList());
-            for (Path proto : protos) {
-                Path rel = root.relativize(proto);
-                copied[0] += copySingleProto(proto, rel, targetDir, seenHashes);
-            }
-        }
-        return copied[0];
-    }
-
-    private int copySingleProto(Path source, Path relative, Path targetDir, Map<String, String> seenHashes)
-            throws IOException, CodeGenException {
-        String rel = relative.toString().replace('\\', '/');
-        if (rel.startsWith("proto/")) {
-            rel = rel.substring("proto/".length());
-        }
-        Path target = targetDir.resolve(rel).normalize();
-        Files.createDirectories(target.getParent());
-
-        String contentHash = sha256(source);
-        if (seenHashes.containsKey(rel)) {
-            if (!seenHashes.get(rel).equals(contentHash)) {
-                throw new CodeGenException("Conflicting proto content for path '" + rel + "'.");
-            }
-            return 0;
-        }
-        seenHashes.put(rel, contentHash);
-        Files.copy(source, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-        return 1;
-    }
-
-    private static List<String> splitCsv(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return List.of();
-        }
-        return Arrays.stream(raw.split(","))
-                .map(String::trim)
-                .filter(s -> !s.isEmpty())
-                .collect(Collectors.toList());
-    }
-
-    private static String sha256(Path path) throws IOException {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            try (InputStream in = Files.newInputStream(path)) {
-                byte[] buffer = new byte[8192];
-                int read;
-                while ((read = in.read(buffer)) > 0) {
-                    digest.update(buffer, 0, read);
-                }
-            }
-            byte[] hash = digest.digest();
-            StringBuilder sb = new StringBuilder();
-            for (byte b : hash) {
-                sb.append(String.format(Locale.ROOT, "%02x", b));
-            }
-            return sb.toString();
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 unavailable", e);
-        }
-    }
-
-    private static void cleanProtoDir(Path dir) throws IOException {
-        if (!Files.exists(dir)) {
+    /**
+     * Read the manifest from a previous gather run and remove every file it
+     * lists from {@code srcMainProto}, leaving user-authored protos intact.
+     */
+    private void cleanPreviousMirrored(Path srcMainProto) throws IOException {
+        Path manifest = srcMainProto.resolve(MANIFEST_FILE);
+        if (!Files.exists(manifest)) {
             return;
         }
-        try (Stream<Path> files = Files.walk(dir)) {
-            files.filter(Files::isRegularFile)
-                    .filter(p -> p.getFileName().toString().endsWith(".proto"))
-                    .forEach(path -> {
-                        try {
-                            Files.deleteIfExists(path);
-                        } catch (IOException e) {
-                            throw new RuntimeException(e);
-                        }
-                    });
+        List<String> paths = Files.readAllLines(manifest);
+        for (String p : paths) {
+            Files.deleteIfExists(srcMainProto.resolve(p));
         }
+        Files.deleteIfExists(manifest);
+        LOG.infof("Cleaned %d previously mirrored proto(s) from %s", paths.size(), srcMainProto);
     }
 
     private static void deleteTree(Path root) throws IOException {
@@ -428,13 +424,13 @@ public class GrpcGatherCodeGen implements CodeGenProvider {
         }
         Files.walkFileTree(root, new SimpleFileVisitor<>() {
             @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+            public @NonNull FileVisitResult visitFile(@NonNull Path file, @NonNull BasicFileAttributes attrs) throws IOException {
                 Files.deleteIfExists(file);
                 return FileVisitResult.CONTINUE;
             }
 
             @Override
-            public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
+            public @NonNull FileVisitResult postVisitDirectory(@NonNull Path dir, IOException exc) throws IOException {
                 Files.deleteIfExists(dir);
                 return FileVisitResult.CONTINUE;
             }

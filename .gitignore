@@ -1,6 +1,8 @@
 .gradle
 **/build/
+**/target/
 !**/src/**/build/
+!**/src/**/target/
 **/bin/
 .quarkus/
 
@@ -21,3 +23,26 @@ gradle-app.setting
 .project
 # JDT-specific (Eclipse Java Development Tools)
 .classpath
+
+# Local logs
+*.txt
+
+*.log
+bin
+
+# Agent session artifacts
+.junie/
+
+# Integration test artifacts
+integration-tests/gathered-protos/
+integration-tests/grpc-descriptors/
+integration-tests/proto-sources/
+integration-tests/proto/
+
+# Files mirrored into the test's src/main/proto by the gatherer at build time.
+# These are tracked by .gathered-protos-manifest.txt and refreshed every run.
+integration-tests/src/main/proto/.gathered-protos-manifest.txt
+integration-tests/src/main/proto/schemas/
+integration-tests/src/main/proto/grpc/
+/.idea/
+/.claude/

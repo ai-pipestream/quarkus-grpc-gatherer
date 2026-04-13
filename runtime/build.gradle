@@ -7,11 +7,11 @@ base {
 }
 
 quarkusExtension {
-    deploymentModule = 'quarkus-grpc-gatherer-deployment'
+    deploymentModule = ":quarkus-grpc-gatherer-deployment"
 }
 
 dependencies {
-    implementation platform('io.quarkus.platform:quarkus-bom:3.32.4')
+    implementation platform('io.quarkus.platform:quarkus-bom:3.34.3')
     implementation 'io.quarkus:quarkus-core'
     annotationProcessor 'io.quarkus:quarkus-extension-processor'
     testImplementation 'io.quarkus:quarkus-junit5'

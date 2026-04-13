@@ -24,14 +24,17 @@ Typical mapping:
 - BSR/git/file modules -> gatherer source config
 - dependency proto imports -> `quarkus.grpc-gather.jar-dependencies`
 
-## 3) Keep descriptor output with grpc-zero
+## 3) Automated defaults with grpc-zero
 
-Set:
+When `quarkus.grpc-gather.enabled=true`, the extension automatically:
+- Points `quarkus.generate-code.grpc.proto-directory` to the gathered files.
+- Provides defaults for `quarkus.generate-code.grpc.descriptor-set.output-dir` (to `build/grpc-descriptors`) and `name` (to `services.dsc`) if `generate=true` is set.
+
+Typically, you only need:
 
 ```properties
+quarkus.grpc-gather.enabled=true
 quarkus.generate-code.grpc.descriptor-set.generate=true
-quarkus.generate-code.grpc.descriptor-set.output-dir=${user.dir}/build/grpc-descriptors
-quarkus.generate-code.grpc.descriptor-set.name=services.dsc
 ```
 
 ## 4) Validate generated outputs
