@@ -1,3 +1,11 @@
+// The Gradle plugin lives in a separate build so the integration-tests
+// module (and external consumers) can apply it via
+//   plugins { id 'ai.pipestream.quarkus-grpc-gatherer' }
+// at configuration time. Composite builds resolve plugin IDs transparently.
+pluginManagement {
+    includeBuild 'gradle-plugin'
+}
+
 rootProject.name = 'quarkus-grpc-gatherer-parent'
 
 include 'quarkus-grpc-gatherer'

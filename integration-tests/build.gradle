@@ -1,5 +1,10 @@
 plugins {
     id 'io.quarkus'
+    // Configures quarkusBuildProperties so grpc-zero reads protos from
+    // build/gathered-protos/proto and emits a descriptor set. Included
+    // from the gradle-plugin/ subproject via settings.gradle's
+    // pluginManagement.includeBuild - no version required.
+    id 'ai.pipestream.quarkus-grpc-gatherer'
 }
 
 dependencies {
@@ -17,11 +22,6 @@ dependencies {
     testImplementation 'io.rest-assured:rest-assured'
 }
 
-// Register build/gathered-protos as an additional Quarkus source parent by
-// declaring its fake /java child as a Java source directory.
-// QuarkusPlugin.getSourcesParents() calls Path::getParent on every Java src
-// dir and passes the result into CodeGenerator as a sourceParentDir. grpc-zero's
-// default input resolution then finds build/gathered-protos/proto automatically.
 tasks.named('compileJava') {
     dependsOn 'quarkusGenerateCode'
 }
