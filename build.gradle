@@ -82,6 +82,54 @@ subprojects {
             withJavadocJar()
         }
 
+        // Maven Central rejects any release whose POM references a SNAPSHOT
+        // dependency, so we have to enforce that on every publishable module
+        // before invoking the release flow. axion-release's own
+        // snapshotDependencies check is broken under Gradle 9 + Quarkus
+        // because it iterates every project's every configuration including
+        // Quarkus internal Copy configurations that throw "Resolution of the
+        // configuration ... was attempted without an exclusive lock". This
+        // task only walks compileClasspath and runtimeClasspath of THIS
+        // module - the only thing that matters for a Maven Central upload.
+        // CI must run :verifyNoSnapshotDeps on every publishable subproject
+        // (and the gradle-plugin composite build) before kicking off the
+        // release.
+        tasks.register('verifyNoSnapshotDeps') {
+            group = 'verification'
+            description = 'Fails the build if compile/runtime classpaths contain any external -SNAPSHOT module versions.'
+            doLast {
+                List<String> violations = []
+                ['compileClasspath', 'runtimeClasspath'].each { configName ->
+                    Configuration config = configurations.findByName(configName)
+                    if (config == null || !config.canBeResolved) {
+                        return
+                    }
+                    config.incoming.resolutionResult.allDependencies.each { dep ->
+                        // Project-internal sibling dependencies resolve to the
+                        // current build's version, which is a SNAPSHOT during
+                        // development, but they get substituted at publish time
+                        // and never end up in the final POM as SNAPSHOTs. Only
+                        // external module coordinates can poison a release.
+                        if (!(dep.requested instanceof org.gradle.api.artifacts.component.ModuleComponentSelector)) {
+                            return
+                        }
+                        if (!(dep.selected.id instanceof org.gradle.api.artifacts.component.ModuleComponentIdentifier)) {
+                            return
+                        }
+                        String version = dep.selected.id.version
+                        if (version.endsWith('-SNAPSHOT')) {
+                            violations << "${project.name}:${configName} -> ${dep.selected.id}"
+                        }
+                    }
+                }
+                if (!violations.isEmpty()) {
+                    throw new GradleException(
+                            "Snapshot dependencies are not allowed for releases (Maven Central rejects them):\n  "
+                                    + violations.join('\n  '))
+                }
+            }
+        }
+
         tasks.withType(Test).configureEach {
             useJUnitPlatform()
         }
@@ -167,4 +215,16 @@ subprojects {
             sign publishing.publications
         }
     }
+}
+
+// Aggregator task: runs verifyNoSnapshotDeps on every publishable subproject
+// PLUS the gradle-plugin composite-included build. CI invokes this single
+// task before createRelease so a release attempt fails fast if any module
+// would put a SNAPSHOT version into a published POM.
+tasks.register('verifyAllNoSnapshotDeps') {
+    group = 'verification'
+    description = 'Runs verifyNoSnapshotDeps on every publishable module and on the gradle-plugin composite build.'
+    dependsOn subprojects.findAll { it.name != 'integration-tests' }
+            .collect { ":${it.name}:verifyNoSnapshotDeps" }
+    dependsOn gradle.includedBuild('gradle-plugin').task(':verifyNoSnapshotDeps')
 }

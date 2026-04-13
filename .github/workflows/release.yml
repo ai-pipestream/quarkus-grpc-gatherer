@@ -49,13 +49,34 @@ jobs:
       - name: Build and Test
         run: ./gradlew build --no-daemon
 
-      - name: Create Release Tag
-        run: ./gradlew createRelease -Prelease.incrementer=${{ inputs.incrementer }} -Prelease.disableChecks
+      # Maven Central rejects releases whose POMs reference SNAPSHOT
+      # dependencies, so we must enforce that BEFORE cutting the release tag.
+      # axion-release's own snapshotDependencies check is broken under
+      # Gradle 9 + Quarkus (it eagerly evaluates a Provider that resolves
+      # Quarkus internal Copy configurations, which throw "Resolution of the
+      # configuration ... was attempted without an exclusive lock"), so we
+      # use a custom verifyAllNoSnapshotDeps task in the root build that
+      # walks only the publishable subprojects' compile/runtime classpaths
+      # plus the gradle-plugin composite build. axion-release's verifyRelease
+      # is then skipped via -x verifyRelease in the createRelease step
+      # below; the protection it would have provided lives here instead.
+      - name: Verify no snapshot dependencies
+        run: ./gradlew verifyAllNoSnapshotDeps --no-daemon --stacktrace
 
-      - name: Publish to Maven Central and GitHub Packages
-        run: |
-          ./gradlew publishAggregationToCentralPortal --no-daemon --stacktrace -x test
-          ./gradlew publishAllPublicationsToGitHubPackagesRepository --no-daemon --continue -x test || true
+      - name: Create Release Tag
+        run: ./gradlew createRelease -Prelease.incrementer=${{ inputs.incrementer }} -Prelease.disableChecks -x verifyRelease
+
+      - name: Publish runtime + deployment to Maven Central
+        run: ./gradlew publishAggregationToCentralPortal --no-daemon --stacktrace -x test
+
+      - name: Publish gradle-plugin to Maven Central
+        run: ./gradlew :gradle-plugin:publishAllPublicationsToCentralPortal --no-daemon --stacktrace -x test
+
+      - name: Publish runtime + deployment to GitHub Packages
+        run: ./gradlew publishAllPublicationsToGitHubPackagesRepository --no-daemon --stacktrace -x test
+
+      - name: Publish gradle-plugin to GitHub Packages
+        run: ./gradlew :gradle-plugin:publishAllPublicationsToGitHubPackagesRepository --no-daemon --stacktrace -x test
 
       - name: Push Release Tag
         run: |

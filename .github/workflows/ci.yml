@@ -77,11 +77,17 @@ jobs:
           echo "Validating publish configuration..."
           ./gradlew tasks --all | grep -E "publishAggregationToCentralPortalSnapshots" || exit 1
           ./gradlew tasks --all | grep -E "publishAllPublicationsToGitHubPackagesRepository" || exit 1
-          echo "✓ Required publish tasks are available"
+          ./gradlew :gradle-plugin:tasks --all | grep -E "publishAllPublicationsToCentralPortalSnapshots" || exit 1
+          ./gradlew :gradle-plugin:tasks --all | grep -E "publishAllPublicationsToGitHubPackagesRepository" || exit 1
+          echo "✓ Required publish tasks are available (root + gradle-plugin)"
           grep -q "GitHubPackages" build.gradle || exit 1
-          echo "✓ GitHub Packages repository is configured"
+          grep -q "GitHubPackages" gradle-plugin/build.gradle || exit 1
+          echo "✓ GitHub Packages repository is configured (root + gradle-plugin)"
           grep -q "nmcpAggregation" build.gradle || exit 1
-          echo "✓ nmcp aggregation is configured"
+          grep -q "com.gradleup.nmcp" gradle-plugin/build.gradle || exit 1
+          echo "✓ nmcp is configured (aggregation in root, single in gradle-plugin)"
+          ./gradlew verifyAllNoSnapshotDeps --no-daemon || exit 1
+          echo "✓ No snapshot dependencies on any publishable runtime classpath"
           echo "✓ Publish configuration is valid"
 
   publish-snapshots:
@@ -104,8 +110,14 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
 
-      - name: Publish Snapshots to Maven Central
+      - name: Publish Snapshots to Maven Central (runtime + deployment)
         run: ./gradlew publishAggregationToCentralPortalSnapshots --no-daemon --stacktrace -x test
 
-      - name: Publish Snapshots to GitHub Packages
-        run: ./gradlew publishAllPublicationsToGitHubPackagesRepository --no-daemon --continue -x test || true
+      - name: Publish Snapshots to Maven Central (gradle-plugin)
+        run: ./gradlew :gradle-plugin:publishAllPublicationsToCentralPortalSnapshots --no-daemon --stacktrace -x test
+
+      - name: Publish Snapshots to GitHub Packages (runtime + deployment)
+        run: ./gradlew publishAllPublicationsToGitHubPackagesRepository --no-daemon --stacktrace -x test
+
+      - name: Publish Snapshots to GitHub Packages (gradle-plugin)
+        run: ./gradlew :gradle-plugin:publishAllPublicationsToGitHubPackagesRepository --no-daemon --stacktrace -x test
