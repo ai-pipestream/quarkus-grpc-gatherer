@@ -28,6 +28,8 @@ public interface ProtoGatherer {
      *
      * <p>Examples: {@code "filesystem"}, {@code "git"}, {@code "jar"},
      * {@code "google-wkt"}, {@code "apicurio"}.
+     *
+     * @return the unique identifier for this gatherer
      */
     String id();
 

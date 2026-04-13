@@ -22,6 +22,12 @@ import io.quarkus.bootstrap.prebuild.CodeGenException;
  */
 public final class FilesystemGatherer implements ProtoGatherer {
 
+    /**
+     * Creates a new instance of {@link FilesystemGatherer}.
+     */
+    public FilesystemGatherer() {
+    }
+
     static final String FILESYSTEM_DIRS = "quarkus.grpc-gather.filesystem-dirs";
 
     @Override

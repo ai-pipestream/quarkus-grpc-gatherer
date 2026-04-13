@@ -26,6 +26,12 @@ import io.quarkus.deployment.CodeGenProvider;
  */
 public final class FilesystemScanGatherer implements ProtoGatherer {
 
+    /**
+     * Creates a new instance of {@link FilesystemScanGatherer}.
+     */
+    public FilesystemScanGatherer() {
+    }
+
     private static final Logger LOG = Logger.getLogger(FilesystemScanGatherer.class);
 
     static final String FILESYSTEM_SCAN_ROOT = "quarkus.grpc-gather.filesystem-scan-root";

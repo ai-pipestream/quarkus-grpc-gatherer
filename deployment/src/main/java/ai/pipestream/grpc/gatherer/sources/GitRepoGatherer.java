@@ -45,6 +45,12 @@ import io.quarkus.bootstrap.prebuild.CodeGenException;
  */
 public final class GitRepoGatherer implements ProtoGatherer {
 
+    /**
+     * Creates a new instance of {@link GitRepoGatherer}.
+     */
+    public GitRepoGatherer() {
+    }
+
     static final String GIT_REPO = "quarkus.grpc-gather.git-repo";
     static final String GIT_REF = "quarkus.grpc-gather.git-ref";
     static final String GIT_SUBDIR = "quarkus.grpc-gather.git-subdir";

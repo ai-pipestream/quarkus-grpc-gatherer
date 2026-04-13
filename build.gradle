@@ -1,3 +1,11 @@
+buildscript {
+    repositories {
+        mavenLocal()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
 plugins {
     id 'base'
     id 'maven-publish'
@@ -8,7 +16,6 @@ plugins {
     id 'io.quarkus' version '3.34.3' apply false
 }
 
-// Axion-release configuration
 scmVersion {
     tag {
         prefix = 'v'
@@ -17,43 +24,69 @@ scmVersion {
     checks {
         uncommittedChanges = false
         aheadOfRemote = false
-        // Disabled due to Quarkus configuration resolution issues
+        // Disabled due to Gradle 9 + Quarkus configuration resolution issues
+        // Quarkus creates special configurations that can't be safely resolved during release verification
         snapshotDependencies = false
     }
 }
 
-def scmVer = scmVersion.version.toString()
 allprojects {
     group = 'ai.pipestream'
-    version = scmVer
+    version = rootProject.scmVersion.version
+}
+
+// Repositories for root project (needed for nmcp plugin's internal dependencies)
+repositories {
+    mavenLocal()
+    mavenCentral()
+    gradlePluginPortal()
+}
+
+nmcpAggregation {
+    publishAllProjectsProbablyBreakingProjectIsolation()
+
+    centralPortal {
+        username = findProperty('mavenCentralUsername') ?: System.getenv('MAVEN_CENTRAL_USERNAME')
+        password = findProperty('mavenCentralPassword') ?: System.getenv('MAVEN_CENTRAL_PASSWORD')
+        publishingType = "AUTOMATIC"
+        // Explicitly set baseUrl to use Maven Central Portal (not OSS)
+        baseUrl = "https://central.sonatype.com/"
+    }
 }
 
 subprojects {
-    apply plugin: 'java-library'
     apply plugin: 'maven-publish'
     apply plugin: 'signing'
-
-    java {
-        toolchain {
-            languageVersion = JavaLanguageVersion.of(21)
-        }
-        if (project.name != 'integration-tests') {
-            withSourcesJar()
-            withJavadocJar()
-        }
-    }
 
     repositories {
         mavenLocal()
         mavenCentral()
+        maven {
+            name = 'GitHubPackages'
+            url = uri("https://maven.pkg.github.com/${System.getenv('GITHUB_REPOSITORY') ?: 'ai-pipestream/quarkus-grpc-gatherer'}")
+            credentials {
+                username = findProperty('gpr.user') ?: System.getenv('GITHUB_ACTOR')
+                password = findProperty('gpr.key') ?: System.getenv('GITHUB_TOKEN')
+            }
+        }
     }
 
-    tasks.withType(Test).configureEach {
-        useJUnitPlatform()
-    }
+    if (project.name != 'integration-tests') {
+        apply plugin: 'java-library'
 
-    tasks.withType(JavaCompile).configureEach {
-        if (project.name != 'integration-tests') {
+        java {
+            toolchain {
+                languageVersion = JavaLanguageVersion.of(21)
+            }
+            withSourcesJar()
+            withJavadocJar()
+        }
+
+        tasks.withType(Test).configureEach {
+            useJUnitPlatform()
+        }
+
+        tasks.withType(JavaCompile).configureEach {
             doFirst {
                 // Quarkus ExtensionAnnotationProcessor requires a pom.xml to generate documentation.
                 // It searches 3 levels above StandardLocation.CLASS_OUTPUT.
@@ -76,13 +109,25 @@ subprojects {
 """
             }
         }
-    }
 
-    if (project.name != 'integration-tests') {
         publishing {
+            repositories {
+                mavenLocal()
+                // GitHub Packages
+                maven {
+                    name = 'GitHubPackages'
+                    url = uri("https://maven.pkg.github.com/${System.getenv('GITHUB_REPOSITORY') ?: 'ai-pipestream/quarkus-grpc-gatherer'}")
+                    credentials {
+                        username = findProperty('gpr.user') ?: System.getenv('GITHUB_ACTOR')
+                        password = findProperty('gpr.key') ?: System.getenv('GITHUB_TOKEN')
+                    }
+                }
+            }
+
             publications {
-                mavenJava(MavenPublication) {
+                create('maven', MavenPublication) {
                     from components.java
+
                     pom {
                         name = "quarkus-grpc-gatherer (${project.name})"
                         description = 'Quarkus extension that gathers protobuf sources before grpc-zero code generation'
@@ -107,39 +152,19 @@ subprojects {
                     }
                 }
             }
-                    repositories {
-                        maven {
-                            name = 'GitHubPackages'
-                            url = uri("https://maven.pkg.github.com/${System.getenv('GITHUB_REPOSITORY') ?: 'ai-pipestream/quarkus-grpc-gatherer'}")
-                            credentials {
-                                username = findProperty('gpr.user') ?: System.getenv('GITHUB_ACTOR')
-                                password = findProperty('gpr.key') ?: System.getenv('GITHUB_TOKEN')
-                            }
-                        }
-                    }
         }
+    }
 
-        signing {
-            def signingKey = System.getenv('GPG_PRIVATE_KEY')
-            def signingPassword = System.getenv('GPG_PASSPHRASE')
-            def isSigningRequired = signingKey != null && !signingKey.isBlank()
-            required = isSigningRequired
-            if (isSigningRequired && signingPassword) {
-                useInMemoryPgpKeys(signingKey, signingPassword)
-                sign publishing.publications
-            }
+    signing {
+        def signingKey = System.getenv("GPG_PRIVATE_KEY")
+        def signingPassword = System.getenv("GPG_PASSPHRASE")
+
+        // Only sign if keys are present (e.g. CI/Release)
+        required { signingKey != null }
+
+        if (signingKey && signingPassword) {
+            useInMemoryPgpKeys(signingKey, signingPassword)
+            sign publishing.publications
         }
     }
 }
-
-nmcpAggregation {
-    publishAllProjectsProbablyBreakingProjectIsolation()
-
-    centralPortal {
-        username = findProperty('mavenCentralUsername') ?: System.getenv('MAVEN_CENTRAL_USERNAME')
-        password = findProperty('mavenCentralPassword') ?: System.getenv('MAVEN_CENTRAL_PASSWORD')
-        publishingType = 'AUTOMATIC'
-        baseUrl = 'https://central.sonatype.com/'
-    }
-}
-

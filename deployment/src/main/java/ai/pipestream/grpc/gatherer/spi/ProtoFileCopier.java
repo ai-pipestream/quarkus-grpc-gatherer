@@ -36,7 +36,13 @@ public final class ProtoFileCopier {
      * Copy every {@code .proto} file under {@code sourceDir} into
      * {@code targetDir}, preserving relative paths under {@code root}.
      *
+     * @param root the base path to relativize against
+     * @param sourceDir the directory to scan for proto files
+     * @param targetDir the directory to copy proto files into
+     * @param ctx the gather context
+     * @param pathPrefix an optional prefix to prepend to paths when checking for exclusion
      * @return the number of files copied
+     * @throws IOException if an I/O error occurs
      */
     public static int copyProtoTree(Path root, Path sourceDir, Path targetDir,
             GatherContext ctx, String pathPrefix) throws IOException {
@@ -62,8 +68,14 @@ public final class ProtoFileCopier {
      * Copy a single {@code .proto} file into the target staging directory,
      * honoring dedup and exclude filters.
      *
+     * @param source the source proto file path
+     * @param relative the relative path of the proto file
+     * @param targetDir the directory to copy the proto file into
+     * @param ctx the gather context
+     * @param pathPrefix an optional prefix to prepend to paths when checking for exclusion
      * @return {@code 1} if the file was copied or already present,
      *         {@code 0} if it was excluded or deduped away
+     * @throws IOException if an I/O error occurs
      */
     public static int copySingleProto(Path source, Path relative, Path targetDir,
             GatherContext ctx, String pathPrefix) throws IOException {
@@ -95,6 +107,13 @@ public final class ProtoFileCopier {
         return 1;
     }
 
+    /**
+     * Computes the SHA-256 hash of the given file.
+     *
+     * @param path the path to the file
+     * @return the hex string representing the hash
+     * @throws IOException if an I/O error occurs
+     */
     public static String sha256(Path path) throws IOException {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -121,6 +140,12 @@ public final class ProtoFileCopier {
         return !s.contains("/invalids/") && !s.contains("/dir/") && !s.contains("invalid.proto");
     }
 
+    /**
+     * Splits a comma-separated string into a list of trimmed, non-empty strings.
+     *
+     * @param raw the raw CSV string
+     * @return a list of trimmed strings
+     */
     public static List<String> splitCsv(String raw) {
         if (raw == null || raw.isBlank()) {
             return List.of();
