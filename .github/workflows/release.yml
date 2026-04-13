@@ -81,6 +81,26 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Release version captured: ${VERSION}"
 
+      # Push the tag BEFORE running any publish step. Maven Central releases
+      # are immutable: if a publish step uploads even one artifact at the
+      # release coordinate and a later step fails, that coordinate is burned
+      # forever and a retry must use a fresh version. With "Push Release Tag"
+      # at the END of the workflow (its previous position), a partial-publish
+      # failure left the tag UNpushed, so the next workflow run would
+      # axion-release-compute the same version, hit the immutability conflict
+      # in Central Portal, and fail in exactly the same place. By pushing the
+      # tag immediately after createRelease we guarantee that:
+      #   1. The tag is on the remote even if every subsequent publish fails.
+      #   2. The next workflow run sees the tag, axion-release computes the
+      #      NEXT bumped version, and a retry naturally moves past the burned
+      #      coordinate without manual tag surgery.
+      # See release run 24327461670 (and the earlier 24326352059 / 24326761268)
+      # for the failure mode this re-ordering prevents.
+      - name: Push Release Tag
+        run: |
+          git push origin main
+          git push --tags
+
       - name: Publish runtime + deployment to Maven Central
         run: ./gradlew publishAggregationToCentralPortal --no-daemon --stacktrace -x test
 
@@ -92,11 +112,6 @@ jobs:
 
       - name: Publish gradle-plugin to GitHub Packages
         run: ./gradlew :gradle-plugin:publishAllPublicationsToGitHubPackagesRepository -PquarkusGrpcGathererVersion=${{ steps.version.outputs.version }} --no-daemon --stacktrace -x test
-
-      - name: Push Release Tag
-        run: |
-          git push origin main
-          git push --tags
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
