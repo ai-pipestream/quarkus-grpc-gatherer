@@ -110,14 +110,27 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
 
+      # gradle-plugin lives in a composite-included build whose version
+      # defaults to 0.1.0-SNAPSHOT. axion-release bumps the parent build's
+      # version after each release tag (e.g. 0.1.1-SNAPSHOT, 0.1.2-SNAPSHOT
+      # ...) but the composite plugin can't see that. Capture the parent's
+      # current version and forward it explicitly so both groups always
+      # publish at matching coordinates.
+      - name: Capture snapshot version
+        id: version
+        run: |
+          VERSION=$(./gradlew -q currentVersion --no-daemon | grep 'Project version' | awk '{print $3}')
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Snapshot version captured: ${VERSION}"
+
       - name: Publish Snapshots to Maven Central (runtime + deployment)
         run: ./gradlew publishAggregationToCentralPortalSnapshots --no-daemon --stacktrace -x test
 
       - name: Publish Snapshots to Maven Central (gradle-plugin)
-        run: ./gradlew :gradle-plugin:publishAllPublicationsToCentralPortalSnapshots --no-daemon --stacktrace -x test
+        run: ./gradlew :gradle-plugin:publishAllPublicationsToCentralPortalSnapshots -PquarkusGrpcGathererVersion=${{ steps.version.outputs.version }} --no-daemon --stacktrace -x test
 
       - name: Publish Snapshots to GitHub Packages (runtime + deployment)
         run: ./gradlew publishAllPublicationsToGitHubPackagesRepository --no-daemon --stacktrace -x test
 
       - name: Publish Snapshots to GitHub Packages (gradle-plugin)
-        run: ./gradlew :gradle-plugin:publishAllPublicationsToGitHubPackagesRepository --no-daemon --stacktrace -x test
+        run: ./gradlew :gradle-plugin:publishAllPublicationsToGitHubPackagesRepository -PquarkusGrpcGathererVersion=${{ steps.version.outputs.version }} --no-daemon --stacktrace -x test
