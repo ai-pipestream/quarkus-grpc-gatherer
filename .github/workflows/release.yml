@@ -66,26 +66,37 @@ jobs:
       - name: Create Release Tag
         run: ./gradlew createRelease -Prelease.incrementer=${{ inputs.incrementer }} -Prelease.disableChecks -x verifyRelease
 
+      # gradle-plugin lives in a composite-included build whose own
+      # build.gradle reads version from -PquarkusGrpcGathererVersion (default
+      # 0.1.0-SNAPSHOT). axion-release bumps the parent build's version but
+      # cannot reach into the composite, so we have to capture the bumped
+      # version ourselves AFTER createRelease and forward it on every
+      # :gradle-plugin: invocation. Without this, the gradle-plugin uploads
+      # itself as 0.1.0-SNAPSHOT to the Central Portal release endpoint and
+      # gets rejected with "The version cannot be a SNAPSHOT".
+      - name: Capture release version
+        id: version
+        run: |
+          VERSION=$(./gradlew -q currentVersion --no-daemon | grep 'Project version' | awk '{print $3}')
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Release version captured: ${VERSION}"
+
       - name: Publish runtime + deployment to Maven Central
         run: ./gradlew publishAggregationToCentralPortal --no-daemon --stacktrace -x test
 
       - name: Publish gradle-plugin to Maven Central
-        run: ./gradlew :gradle-plugin:publishAllPublicationsToCentralPortal --no-daemon --stacktrace -x test
+        run: ./gradlew :gradle-plugin:publishAllPublicationsToCentralPortal -PquarkusGrpcGathererVersion=${{ steps.version.outputs.version }} --no-daemon --stacktrace -x test
 
       - name: Publish runtime + deployment to GitHub Packages
         run: ./gradlew publishAllPublicationsToGitHubPackagesRepository --no-daemon --stacktrace -x test
 
       - name: Publish gradle-plugin to GitHub Packages
-        run: ./gradlew :gradle-plugin:publishAllPublicationsToGitHubPackagesRepository --no-daemon --stacktrace -x test
+        run: ./gradlew :gradle-plugin:publishAllPublicationsToGitHubPackagesRepository -PquarkusGrpcGathererVersion=${{ steps.version.outputs.version }} --no-daemon --stacktrace -x test
 
       - name: Push Release Tag
         run: |
           git push origin main
           git push --tags
-
-      - name: Get version
-        id: version
-        run: echo "version=$(./gradlew -q currentVersion | grep 'Project version' | awk '{print $3}')" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
