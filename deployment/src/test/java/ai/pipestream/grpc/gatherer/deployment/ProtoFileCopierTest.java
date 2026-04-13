@@ -18,7 +18,9 @@ import ai.pipestream.grpc.gatherer.spi.ProtoFileCopier;
 class ProtoFileCopierTest {
 
     private static GatherContext newCtx(Path stagingRoot) {
-        return new GatherContext(null, null, stagingRoot, new HashMap<>(), null);
+        // Use the init-phase constructor so we can pass null for the fields
+        // ProtoFileCopier doesn't touch (applicationModel, workDir, config).
+        return new GatherContext(null, null, stagingRoot, null, new HashMap<>(), null);
     }
 
     @Test
