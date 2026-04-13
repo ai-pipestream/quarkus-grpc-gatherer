@@ -87,17 +87,28 @@ Use this when the repo is a buf workspace with each module's protos under `<modu
 ## Gradle usage
 
 ```gradle
-dependencies {
-  implementation "ai.pipestream:quarkus-grpc-gatherer:0.1.0-SNAPSHOT"
-  implementation "io.quarkiverse.grpc.zero:quarkus-grpc-zero:0.0.8"
-  // Real gRPC server? keep quarkus-grpc but drop its codegen, which grpc-zero replaces.
-  implementation("io.quarkus:quarkus-grpc") {
-    exclude group: "io.quarkus", module: "quarkus-grpc-codegen"
-  }
+plugins {
+  id 'io.quarkus' version '3.34.3'
+  // Wires the gatherer's staged proto tree into grpc-zero and routes the
+  // generated FileDescriptorSet onto the runtime classpath at
+  // META-INF/grpc/services.dsc. See "How the Gradle plugin auto-wires
+  // everything" below for what it does under the hood.
+  id 'ai.pipestream.quarkus-grpc-gatherer' version '0.1.0-SNAPSHOT'
 }
 
-// Make Quarkus see build/gathered-protos/proto as a grpc-zero input.
-sourceSets.main.java.srcDirs += file("${buildDir}/gathered-protos/java")
+dependencies {
+  // Brings in the runtime extension AND, transitively (via api scope),
+  // io.quarkiverse.grpc.zero:quarkus-grpc-zero. Consumers do NOT need to
+  // declare grpc-zero explicitly.
+  implementation 'ai.pipestream:quarkus-grpc-gatherer:0.1.0-SNAPSHOT'
+
+  // Real gRPC server? Keep quarkus-grpc but exclude its codegen module
+  // (grpc-zero replaces it). Skip this whole block if you only need the
+  // generated protobuf message types and not the @GrpcService runtime.
+  implementation('io.quarkus:quarkus-grpc') {
+    exclude group: 'io.quarkus', module: 'quarkus-grpc-codegen'
+  }
+}
 ```
 
 ```properties
@@ -109,30 +120,21 @@ quarkus.grpc-gather.buf-workspace-ref=main
 quarkus.grpc-gather.buf-workspace-modules=common,pipeline-module
 ```
 
-## Descriptor set generation
+That is the entire integration contract. No `sourceSets` addition, no `Copy` task, no descriptor-set config — the Gradle plugin handles all of that automatically.
 
-grpc-zero emits a `FileDescriptorSet` when you set:
+## How the Gradle plugin auto-wires everything
 
-```properties
-quarkus.generate-code.grpc.descriptor-set.generate=true
-quarkus.generate-code.grpc.descriptor-set.name=services.dsc
-```
+When applied alongside `io.quarkus`, the `ai.pipestream.quarkus-grpc-gatherer` Gradle plugin reaches into `QuarkusPluginExtension.quarkusBuildProperties` at Gradle configuration time and sets three keys:
 
-The file lands in grpc-zero's default codegen output directory (`build/classes/java/quarkus-generated-sources/grpc/services.dsc` for Gradle). That path is compiled Java output, not a resource — so runtime consumers that load descriptors from the classpath will not find it there.
+| Key | Value |
+|---|---|
+| `quarkus.grpc.codegen.proto-directory` | absolute path to `<buildDir>/gathered-protos/proto` |
+| `quarkus.generate-code.grpc.descriptor-set.generate` | `true` |
+| `quarkus.generate-code.grpc.descriptor-set.name` | `services.dsc` |
 
-To expose it at `META-INF/grpc/services.dsc` (the path pipestream's `GoogleDescriptorLoader` looks up by default), add a `processResources.from()` block:
+These flow through `EffectiveConfig` (source ordinal 290) into the `Properties` argument of `CodeGenerator.initAndRun` and ultimately into the `Map<String,String> properties` Quarkus passes to every `CodeGenProvider.init()` call **before** any provider is instantiated. grpc-zero's `init()` reads `proto-directory` from that Map, sets its `input` field, and `getInputDirectory()` returns the absolute path to the gatherer's staging dir. ServiceLoader ordering between providers is irrelevant because the value is in the Map before any of them load.
 
-```gradle
-tasks.named('processResources').configure {
-    dependsOn 'quarkusGenerateCode'
-    from(layout.buildDirectory.dir('classes/java/quarkus-generated-sources/grpc')) {
-        include 'services.dsc'
-        into 'META-INF/grpc'
-    }
-}
-```
-
-After a build, `services.dsc` will be present in the final jar at `META-INF/grpc/services.dsc`.
+After grpc-zero emits `services.dsc` during code generation, the gatherer's `GrpcGathererProcessor` BuildStep reads it from disk and produces a `GeneratedResourceBuildItem("META-INF/grpc/services.dsc", bytes)`. Quarkus packages those bytes into `quarkus-app/quarkus/generated-bytecode.jar` for the production runtime classpath, and serves them through the `MemoryClassPathElement` chain for `@QuarkusTest` so `Thread.currentThread().getContextClassLoader().getResourceAsStream("META-INF/grpc/services.dsc")` finds the descriptor in either context.
 
 ## Maven usage
 
@@ -142,14 +144,15 @@ After a build, `services.dsc` will be present in the final jar at `META-INF/grpc
   <artifactId>quarkus-grpc-gatherer</artifactId>
   <version>0.1.0-SNAPSHOT</version>
 </dependency>
-<dependency>
-  <groupId>io.quarkiverse.grpc.zero</groupId>
-  <artifactId>quarkus-grpc-zero</artifactId>
-  <version>0.0.8</version>
-</dependency>
 ```
 
-Maven handles source roots and resources differently from Gradle; the equivalent hooks are not documented here yet.
+`quarkus-grpc-zero` is pulled in transitively. Maven consumers do NOT have an equivalent of the Gradle plugin yet, so they must set the three keys above manually in `application.properties`:
+
+```properties
+quarkus.grpc.codegen.proto-directory=${project.build.directory}/gathered-protos/proto
+quarkus.generate-code.grpc.descriptor-set.generate=true
+quarkus.generate-code.grpc.descriptor-set.name=services.dsc
+```
 
 ## Build
 

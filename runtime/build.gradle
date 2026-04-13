@@ -13,6 +13,22 @@ quarkusExtension {
 dependencies {
     implementation platform('io.quarkus.platform:quarkus-bom:3.34.3')
     implementation 'io.quarkus:quarkus-core'
+
+    // Expose quarkus-grpc-zero as an api dependency so consumers do not have
+    // to declare it themselves. The gatherer is useless without grpc-zero
+    // (the gatherer stages protos, grpc-zero compiles them) so coupling the
+    // two is a feature: the gatherer's release pins a known-compatible
+    // grpc-zero version, and the consumer's build.gradle drops one line.
+    //
+    // NOTE: we intentionally do NOT bundle io.quarkus:quarkus-grpc here.
+    // The choice between the full quarkus-grpc runtime (real gRPC server)
+    // and the lighter quarkus-grpc-stubs (client stubs only) is consumer-
+    // specific - the gatherer's own integration-tests use stubs while
+    // platform-registration-service uses the full runtime. Forcing one
+    // would over-pull for the other. Consumers still declare quarkus-grpc
+    // (with quarkus-grpc-codegen excluded) or quarkus-grpc-stubs themselves.
+    api 'io.quarkiverse.grpc.zero:quarkus-grpc-zero:0.0.8'
+
     annotationProcessor 'io.quarkus:quarkus-extension-processor'
     testImplementation 'io.quarkus:quarkus-junit5'
 }
