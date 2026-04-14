@@ -18,8 +18,12 @@ import io.quarkus.deployment.pkg.builditem.OutputTargetBuildItem;
  * Build-time processor for the quarkus-grpc-gatherer extension. Registers the
  * feature and routes the grpc-zero-generated {@code FileDescriptorSet} onto
  * the application classpath at {@code META-INF/grpc/services.dsc}.
+ *
+ * <p>This type is public so Gradle's standard `withJavadocJar()` publication
+ * for the `quarkus-grpc-gatherer-deployment` artifact still has at least one
+ * documentable type after removing the old CodeGenProvider implementation.
  */
-class GrpcGathererProcessor {
+public class GrpcGathererProcessor {
 
     private static final Logger LOG = Logger.getLogger(GrpcGathererProcessor.class);
     private static final String FEATURE = "grpc-gatherer";
@@ -37,7 +41,7 @@ class GrpcGathererProcessor {
     /**
      * Default filename grpc-zero writes the descriptor set as when
      * {@code quarkus.generate-code.grpc.descriptor-set.name} is set by
-     * {@link GrpcGatherCodeGen#init(io.quarkus.bootstrap.model.ApplicationModel, java.util.Map)}.
+     * the Gradle gather task wiring before Quarkus code generation runs.
      */
     private static final String DESCRIPTOR_FILENAME = "services.dsc";
 

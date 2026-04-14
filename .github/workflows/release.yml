@@ -101,13 +101,13 @@ jobs:
           git push origin main
           git push --tags
 
-      - name: Publish runtime + deployment to Maven Central
+      - name: Publish runtime + deployment + api to Maven Central
         run: ./gradlew publishAggregationToCentralPortal --no-daemon --stacktrace -x test
 
       - name: Publish gradle-plugin to Maven Central
         run: ./gradlew :gradle-plugin:publishAllPublicationsToCentralPortal -PquarkusGrpcGathererVersion=${{ steps.version.outputs.version }} --no-daemon --stacktrace -x test
 
-      - name: Publish runtime + deployment to GitHub Packages
+      - name: Publish runtime + deployment + api to GitHub Packages
         run: ./gradlew publishAllPublicationsToGitHubPackagesRepository --no-daemon --stacktrace -x test
 
       - name: Publish gradle-plugin to GitHub Packages

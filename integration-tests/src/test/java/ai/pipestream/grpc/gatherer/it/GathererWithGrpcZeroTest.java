@@ -15,6 +15,7 @@ import com.google.protobuf.DescriptorProtos;
 import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
 import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
 
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import io.quarkus.test.junit.QuarkusTest;
@@ -40,6 +41,11 @@ import io.quarkus.test.junit.QuarkusTest;
  * </ol>
  */
 @QuarkusTest
+@Disabled("Written against the old CodeGenProvider architecture; "
+        + "reads quarkus.grpc-gather.* config keys from application.properties. "
+        + "After #13 deletes the CodeGenProvider path, the keys are dead and the tests cannot be "
+        + "adapted in-place — they need a full rewrite against the new Gradle task + DSL. "
+        + "New TestKit-based integration tests land in #14.")
 class GathererWithGrpcZeroTest {
 
     private static Path moduleDir() {

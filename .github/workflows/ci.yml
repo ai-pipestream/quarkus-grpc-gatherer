@@ -123,13 +123,13 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Snapshot version captured: ${VERSION}"
 
-      - name: Publish Snapshots to Maven Central (runtime + deployment)
+      - name: Publish Snapshots to Maven Central (runtime + deployment + api)
         run: ./gradlew publishAggregationToCentralPortalSnapshots --no-daemon --stacktrace -x test
 
       - name: Publish Snapshots to Maven Central (gradle-plugin)
         run: ./gradlew :gradle-plugin:publishAllPublicationsToCentralPortalSnapshots -PquarkusGrpcGathererVersion=${{ steps.version.outputs.version }} --no-daemon --stacktrace -x test
 
-      - name: Publish Snapshots to GitHub Packages (runtime + deployment)
+      - name: Publish Snapshots to GitHub Packages (runtime + deployment + api)
         run: ./gradlew publishAllPublicationsToGitHubPackagesRepository --no-daemon --stacktrace -x test
 
       - name: Publish Snapshots to GitHub Packages (gradle-plugin)
