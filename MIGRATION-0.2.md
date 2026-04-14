@@ -172,6 +172,6 @@ If old `quarkus.grpc-gather.*` keys remain in `application.properties`, Quarkus 
 
 Remove all old gather keys from `application.properties` after moving to the Gradle DSL.
 
-## Release workflow note for 0.2.0
+## Release workflow note for 0.2.0 (maintainers only)
 
 0.2.0 is an explicit minor bump from 0.1.0. When triggering release automation, use a minor increment (`incrementMinor`) or force `0.2.0` explicitly (for example via `-Prelease.forceVersion=0.2.0`).

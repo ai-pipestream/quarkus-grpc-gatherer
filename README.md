@@ -4,6 +4,8 @@
 
 ## Quick start
 
+> Examples below use the target release coordinate `0.2.0`. Until the release is cut, use the current snapshot (`0.2.0-SNAPSHOT`) in local builds.
+
 ```gradle
 plugins {
     id 'io.quarkus' version '3.34.3'
