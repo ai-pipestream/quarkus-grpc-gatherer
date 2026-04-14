@@ -163,6 +163,8 @@ class GatherProtosTaskIntegrationTest {
 
     private void copyResourceTree(String resourceDir, Path destination) throws Exception {
         URI sourceUri = GatherProtosTaskIntegrationTest.class.getClassLoader().getResource(resourceDir).toURI();
+        // Path.of(uri) works when test resources are extracted to disk (Gradle test runtime).
+        // Runners that serve test resources from a jar may fail here with FileSystemNotFoundException.
         Path source = Path.of(sourceUri);
         try (var stream = Files.walk(source)) {
             for (Path path : stream.toList()) {

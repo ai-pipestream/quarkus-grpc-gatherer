@@ -8,6 +8,7 @@ dependencies {
     implementation 'io.quarkus:quarkus-arc'
 
     implementation project(':quarkus-grpc-gatherer')
+    implementation project(':quarkus-grpc-gatherer-deployment')
     implementation('io.quarkus:quarkus-grpc-stubs') {
         exclude group: 'io.quarkus', module: 'quarkus-grpc-codegen'
     }
@@ -19,25 +20,8 @@ dependencies {
     testImplementation 'io.quarkus:quarkus-junit5'
 }
 
-tasks.named('compileJava') {
-    dependsOn 'quarkusGenerateCode'
-}
-
-tasks.named('compileTestJava') {
-    dependsOn 'quarkusGenerateCode'
-}
-
 quarkusGrpcGather {
     filesystem {
         dirs.from(file('src/test/resources/fixtures'))
     }
-}
-
-quarkus {
-    set('grpc-gather.enabled', 'true')
-}
-
-tasks.named('test') {
-    dependsOn 'quarkusBuild'
-    classpath += files(layout.buildDirectory.file('quarkus-app/quarkus/generated-bytecode.jar'))
 }

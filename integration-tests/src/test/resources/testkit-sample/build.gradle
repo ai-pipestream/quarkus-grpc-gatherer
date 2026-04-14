@@ -19,10 +19,6 @@ quarkusGrpcGather {
     }
 }
 
-quarkus {
-    set('grpc-gather.enabled', 'true')
-}
-
 tasks.withType(Test).configureEach {
     failOnNoDiscoveredTests = false
 }
