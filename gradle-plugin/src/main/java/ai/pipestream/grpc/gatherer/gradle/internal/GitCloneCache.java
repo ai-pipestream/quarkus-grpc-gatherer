@@ -38,7 +38,7 @@ public final class GitCloneCache {
         Path cacheDir = cacheDir(gradleUserHome, repoUrl);
         Path lockFile = lockFile(cacheDir);
         Files.createDirectories(lockFile.getParent());
-        ReentrantLock jvmLock = JVM_LOCKS.computeIfAbsent(lockFile.toAbsolutePath().normalize(), ignored -> new ReentrantLock());
+        ReentrantLock jvmLock = JVM_LOCKS.computeIfAbsent(lockFile.toAbsolutePath().normalize(), lockPath -> new ReentrantLock());
         jvmLock.lock();
 
         try {
