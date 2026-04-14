@@ -73,6 +73,7 @@ final class ProtoFileCopier {
 
     static boolean shouldIncludeProtoFile(Path p) {
         String s = p.toString().replace('\\', '/');
+        // TODO(#9): legacy fixture-name filtering was ported verbatim from deployment; replace with explicit user-configured excludes.
         return !s.contains("/invalids/") && !s.contains("/dir/") && !s.contains("invalid.proto");
     }
 

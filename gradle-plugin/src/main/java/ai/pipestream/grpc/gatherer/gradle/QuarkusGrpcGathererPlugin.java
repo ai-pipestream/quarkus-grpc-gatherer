@@ -98,7 +98,6 @@ public class QuarkusGrpcGathererPlugin implements Plugin<Project> {
                 QuarkusGrpcGatherExtension.class);
         extension.getOutputDir().convention(project.getLayout().getBuildDirectory().dir(GATHERER_OUTPUT_SUBDIR));
         extension.getBufWorkspace().getModules().convention(List.of());
-        extension.getFilesystem().getDirs().setFrom(List.of());
         extension.getJarDependencies().getDependencies().convention(List.of());
         extension.getJarDependencies().getScanAll().convention(false);
         extension.getGoogleWkt().getInclude().convention(false);

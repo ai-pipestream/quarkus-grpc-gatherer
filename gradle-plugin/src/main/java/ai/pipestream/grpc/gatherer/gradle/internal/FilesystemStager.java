@@ -14,25 +14,27 @@ public final class FilesystemStager {
     private FilesystemStager() {
     }
 
-    public static int stage(FilesystemSpec spec, Path targetDir) throws IOException {
-        Files.createDirectories(targetDir);
-
+    public static int stage(FilesystemSpec spec, Path stagingRoot) throws IOException {
+        Files.createDirectories(stagingRoot);
         int copied = 0;
+        int index = 0;
         for (File dir : spec.getDirs().getFiles()) {
             Path source = dir.toPath().toAbsolutePath().normalize();
+            Path targetDir = stagingRoot.resolve("filesystem-" + index++);
+            Files.createDirectories(targetDir);
             copied += ProtoFileCopier.copyProtoTree(source, source, targetDir);
         }
 
         if (spec.getScanRoot().isPresent()) {
             String scanRoot = spec.getScanRoot().get().trim();
             if (!scanRoot.isEmpty()) {
-                copied += stageScanned(Path.of(scanRoot).toAbsolutePath().normalize(), targetDir);
+                copied += stageScanned(Path.of(scanRoot).toAbsolutePath().normalize(), stagingRoot);
             }
         }
         return copied;
     }
 
-    private static int stageScanned(Path root, Path targetDir) throws IOException {
+    private static int stageScanned(Path root, Path stagingRoot) throws IOException {
         if (!Files.isDirectory(root)) {
             return 0;
         }
@@ -44,6 +46,12 @@ public final class FilesystemStager {
                     .filter(FilesystemStager::isScanCandidate)
                     .toList();
             for (Path protoDir : protoDirs) {
+                String sanitizedDirName = root.relativize(protoDir).toString().replace('\\', '-').replace('/', '-');
+                if (sanitizedDirName.isEmpty()) {
+                    sanitizedDirName = "root";
+                }
+                Path targetDir = stagingRoot.resolve("scan-" + sanitizedDirName);
+                Files.createDirectories(targetDir);
                 copied += ProtoFileCopier.copyProtoTree(protoDir, protoDir, targetDir);
             }
         }
@@ -52,12 +60,6 @@ public final class FilesystemStager {
 
     private static boolean isScanCandidate(Path p) {
         String s = p.toString().replace('\\', '/');
-        if (s.contains("/invalids") || s.contains("/dir/") || s.endsWith("/dir")
-                || s.contains("/grpc-gatherer-orig-tests")
-                || s.contains("/build/") || s.contains("/target/")
-                || s.contains("/src/test/")) {
-            return false;
-        }
         return s.endsWith("/src/main/proto") || s.endsWith("/src/main/resources");
     }
 }

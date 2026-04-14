@@ -50,7 +50,7 @@ public abstract class GatherProtosTask extends DefaultTask {
         Files.createDirectories(stagingRoot);
         Files.createDirectories(outputDir);
 
-        int filesystemCount = FilesystemStager.stage(getFilesystem(), stagingRoot.resolve("filesystem"));
+        int filesystemCount = FilesystemStager.stage(getFilesystem(), stagingRoot);
         int jarCount = JarDependencyStager.stage(getJarDependencies(), stagingRoot.resolve("jar-dependencies"));
         int googleCount = GoogleWktStager.stage(getGoogleWkt(), stagingRoot.resolve("google"));
         StagingMerger.MergeResult mergeResult = StagingMerger.merge(stagingRoot, outputDir, getLogger());

@@ -70,6 +70,50 @@ class GatherProtosTaskTest {
     }
 
     @Test
+    void filesystemDirsDifferentContentWarnsAboutConflict() throws IOException {
+        writeSettings();
+
+        String firstContent = "syntax = \"proto3\"; message FooFirst {}\n";
+        String secondContent = "syntax = \"proto3\"; message FooSecond {}\n";
+
+        Path firstDir = testProjectDir.resolve("conflict-a");
+        Path secondDir = testProjectDir.resolve("conflict-b");
+        Files.createDirectories(firstDir);
+        Files.createDirectories(secondDir);
+        Files.writeString(firstDir.resolve("foo.proto"), firstContent);
+        Files.writeString(secondDir.resolve("foo.proto"), secondContent);
+
+        writeBuildFile("""
+                plugins {
+                    id 'io.quarkus' version '3.34.3'
+                    id 'ai.pipestream.quarkus-grpc-gatherer'
+                }
+
+                repositories {
+                    mavenLocal()
+                    mavenCentral()
+                }
+
+                quarkusGrpcGather {
+                    outputDir = layout.buildDirectory.dir('conflict-gathered/proto')
+                    filesystem {
+                        dirs.from(file('conflict-a'), file('conflict-b'))
+                    }
+                }
+                """);
+
+        BuildResult first = runGatherProtos();
+        assertEquals(TaskOutcome.SUCCESS, first.task(":gatherProtos").getOutcome());
+        assertTrue(first.getOutput().contains("conflicting proto file(s)"));
+
+        Path mergedProto = testProjectDir.resolve("build/conflict-gathered/proto/foo.proto");
+        assertEquals(firstContent, Files.readString(mergedProto));
+
+        BuildResult second = runGatherProtos();
+        assertEquals(TaskOutcome.UP_TO_DATE, second.task(":gatherProtos").getOutcome());
+    }
+
+    @Test
     void scanRootFindsNestedSrcMainProtoAndResources() throws IOException {
         writeSettings();
 
