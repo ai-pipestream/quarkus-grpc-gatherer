@@ -7,13 +7,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 
+import org.eclipse.jgit.api.Git;
 import org.gradle.testkit.runner.BuildResult;
 import org.gradle.testkit.runner.GradleRunner;
 import org.gradle.testkit.runner.TaskOutcome;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -21,6 +27,19 @@ class GatherProtosTaskTest {
 
     @TempDir
     Path testProjectDir;
+
+    @TempDir
+    Path tempGitDir;
+
+    private final List<Git> openedGits = new ArrayList<>();
+
+    @AfterEach
+    void closeGits() {
+        for (Git git : openedGits) {
+            git.close();
+        }
+        openedGits.clear();
+    }
 
     @Test
     void filesystemDirsDedupAndIncrementalBehavior() throws IOException {
@@ -242,11 +261,234 @@ class GatherProtosTaskTest {
         assertTrue(Files.exists(stagedAny));
     }
 
+    @Test
+    void bufWorkspaceCloneOnceThenUpToDateOnRerun() throws Exception {
+        writeSettings();
+        Path gradleUserHome = testProjectDir.resolve("gradle-home");
+        GitFixture fixture = createProtoFixtureRepo();
+
+        writeBuildFile("""
+                plugins {
+                    id 'io.quarkus' version '3.34.3'
+                    id 'ai.pipestream.quarkus-grpc-gatherer'
+                }
+
+                repositories {
+                    mavenLocal()
+                    mavenCentral()
+                }
+
+                quarkusGrpcGather {
+                    outputDir = layout.buildDirectory.dir('buf-gathered/proto')
+                    bufWorkspace {
+                        repo = '%s'
+                        ref = 'main'
+                        modules = ['common', 'pipeline-module']
+                        protoSubdir = 'proto'
+                    }
+                }
+                """.formatted(fixture.repoUri()));
+
+        BuildResult first = runGatherProtos(gradleUserHome);
+        assertEquals(TaskOutcome.SUCCESS, first.task(":gatherProtos").getOutcome());
+
+        Path cacheRoot = gradleUserHome.resolve("caches/grpc-gatherer");
+        assertTrue(Files.isDirectory(cacheRoot));
+        assertTrue(Files.list(cacheRoot).findAny().isPresent());
+
+        BuildResult second = runGatherProtos(gradleUserHome);
+        assertEquals(TaskOutcome.UP_TO_DATE, second.task(":gatherProtos").getOutcome());
+    }
+
+    @Test
+    void bufWorkspaceRerunsWhenUpstreamMoves() throws Exception {
+        writeSettings();
+        Path gradleUserHome = testProjectDir.resolve("gradle-home");
+        GitFixture fixture = createProtoFixtureRepo();
+
+        writeBuildFile("""
+                plugins {
+                    id 'io.quarkus' version '3.34.3'
+                    id 'ai.pipestream.quarkus-grpc-gatherer'
+                }
+
+                repositories {
+                    mavenLocal()
+                    mavenCentral()
+                }
+
+                quarkusGrpcGather {
+                    outputDir = layout.buildDirectory.dir('buf-moved/proto')
+                    bufWorkspace {
+                        repo = '%s'
+                        ref = 'main'
+                        modules = ['common']
+                        protoSubdir = 'proto'
+                    }
+                }
+                """.formatted(fixture.repoUri()));
+
+        BuildResult first = runGatherProtos(gradleUserHome);
+        assertEquals(TaskOutcome.SUCCESS, first.task(":gatherProtos").getOutcome());
+
+        fixture.commitToMain("common/proto/example/common/v1/extra.proto",
+                "syntax = \"proto3\"; package example.common.v1; message Extra {}\n");
+
+        BuildResult second = runGatherProtos(gradleUserHome);
+        assertEquals(TaskOutcome.SUCCESS, second.task(":gatherProtos").getOutcome());
+    }
+
+    @Test
+    void pinnedRefStaysUpToDateAcrossMainBranchChanges() throws Exception {
+        writeSettings();
+        Path gradleUserHome = testProjectDir.resolve("gradle-home");
+        GitFixture fixture = createProtoFixtureRepo();
+        fixture.createTag("v1.0.0");
+
+        writeBuildFile("""
+                plugins {
+                    id 'io.quarkus' version '3.34.3'
+                    id 'ai.pipestream.quarkus-grpc-gatherer'
+                }
+
+                repositories {
+                    mavenLocal()
+                    mavenCentral()
+                }
+
+                quarkusGrpcGather {
+                    outputDir = layout.buildDirectory.dir('buf-tagged/proto')
+                    bufWorkspace {
+                        repo = '%s'
+                        ref = 'v1.0.0'
+                        modules = ['common']
+                        protoSubdir = 'proto'
+                    }
+                }
+                """.formatted(fixture.repoUri()));
+
+        BuildResult first = runGatherProtos(gradleUserHome);
+        assertEquals(TaskOutcome.SUCCESS, first.task(":gatherProtos").getOutcome());
+
+        fixture.commitToMain("common/proto/example/common/v1/new_main_only.proto",
+                "syntax = \"proto3\"; package example.common.v1; message MainOnly {}\n");
+
+        BuildResult second = runGatherProtos(gradleUserHome);
+        assertEquals(TaskOutcome.UP_TO_DATE, second.task(":gatherProtos").getOutcome());
+    }
+
+    @Test
+    void offlineBuildUsesCachedShaAndCheckout() throws Exception {
+        writeSettings();
+        Path gradleUserHome = testProjectDir.resolve("gradle-home");
+        GitFixture fixture = createProtoFixtureRepo();
+
+        writeBuildFile("""
+                plugins {
+                    id 'io.quarkus' version '3.34.3'
+                    id 'ai.pipestream.quarkus-grpc-gatherer'
+                }
+
+                repositories {
+                    mavenLocal()
+                    mavenCentral()
+                }
+
+                quarkusGrpcGather {
+                    outputDir = layout.buildDirectory.dir('buf-offline/proto')
+                    bufWorkspace {
+                        repo = '%s'
+                        ref = 'main'
+                        modules = ['common']
+                        protoSubdir = 'proto'
+                    }
+                }
+                """.formatted(fixture.repoUri()));
+
+        BuildResult first = runGatherProtos(gradleUserHome);
+        assertEquals(TaskOutcome.SUCCESS, first.task(":gatherProtos").getOutcome());
+
+        Path movedRepo = fixture.repoPath().resolveSibling("moved-remote");
+        Files.move(fixture.repoPath(), movedRepo, StandardCopyOption.ATOMIC_MOVE);
+
+        BuildResult offline = runGatherProtos(gradleUserHome, "--offline");
+        assertEquals(TaskOutcome.UP_TO_DATE, offline.task(":gatherProtos").getOutcome());
+    }
+
+    @Test
+    void parallelProjectsCanShareCloneCacheWithoutLockErrors() throws Exception {
+        Path gradleUserHome = testProjectDir.resolve("gradle-home");
+        GitFixture fixture = createProtoFixtureRepo();
+
+        Files.writeString(testProjectDir.resolve("settings.gradle"), """
+                pluginManagement {
+                    repositories {
+                        mavenLocal()
+                        mavenCentral()
+                        gradlePluginPortal()
+                    }
+                }
+                rootProject.name = 'parallel-gather-test'
+                include('a', 'b')
+                """);
+
+        writeBuildFile("""
+                plugins {
+                    id 'io.quarkus' version '3.34.3' apply false
+                    id 'ai.pipestream.quarkus-grpc-gatherer' apply false
+                }
+
+                subprojects {
+                    apply plugin: 'io.quarkus'
+                    apply plugin: 'ai.pipestream.quarkus-grpc-gatherer'
+
+                    repositories {
+                        mavenLocal()
+                        mavenCentral()
+                    }
+
+                    quarkusGrpcGather {
+                        outputDir = layout.buildDirectory.dir('gathered/proto')
+                        bufWorkspace {
+                            repo = '%s'
+                            ref = 'main'
+                            modules = ['common']
+                            protoSubdir = 'proto'
+                        }
+                    }
+                }
+                """.formatted(fixture.repoUri()));
+
+        Files.createDirectories(testProjectDir.resolve("a"));
+        Files.createDirectories(testProjectDir.resolve("b"));
+
+        BuildResult result = runBuild(gradleUserHome, ":a:gatherProtos", ":b:gatherProtos", "--parallel", "--max-workers=2");
+        assertEquals(TaskOutcome.SUCCESS, result.task(":a:gatherProtos").getOutcome());
+        assertEquals(TaskOutcome.SUCCESS, result.task(":b:gatherProtos").getOutcome());
+        assertFalse(result.getOutput().contains("OverlappingFileLockException"));
+    }
+
     private BuildResult runGatherProtos() {
+        return runGatherProtos(testProjectDir.resolve("gradle-home"));
+    }
+
+    private BuildResult runGatherProtos(Path gradleUserHome, String... extraArgs) {
+        String[] args = new String[2 + extraArgs.length];
+        args[0] = "gatherProtos";
+        args[1] = "--console=plain";
+        System.arraycopy(extraArgs, 0, args, 2, extraArgs.length);
+        return runBuild(gradleUserHome, args);
+    }
+
+    private BuildResult runBuild(Path gradleUserHome, String... args) {
+        String[] withGradleHome = new String[args.length + 2];
+        withGradleHome[0] = "-g";
+        withGradleHome[1] = gradleUserHome.toString();
+        System.arraycopy(args, 0, withGradleHome, 2, args.length);
         return GradleRunner.create()
                 .withProjectDir(testProjectDir.toFile())
                 .withPluginClasspath()
-                .withArguments("gatherProtos", "--console=plain")
+                .withArguments(Arrays.asList(withGradleHome))
                 .build();
     }
 
@@ -274,6 +516,44 @@ class GatherProtosTaskTest {
                 jar.write(entry.getValue().getBytes());
                 jar.closeEntry();
             }
+        }
+    }
+
+    private GitFixture createProtoFixtureRepo() throws Exception {
+        Path repoPath = tempGitDir.resolve("proto-remote");
+        Files.createDirectories(repoPath);
+        Git git = Git.init()
+                .setInitialBranch("main")
+                .setDirectory(repoPath.toFile())
+                .call();
+        openedGits.add(git);
+        writeRepoFile(repoPath.resolve("common/proto/example/common/v1/common.proto"),
+                "syntax = \"proto3\";\npackage example.common.v1;\nmessage Common {}\n");
+        writeRepoFile(repoPath.resolve("pipeline-module/proto/example/pipeline/v1/pipeline.proto"),
+                "syntax = \"proto3\";\npackage example.pipeline.v1;\nimport \"example/common/v1/common.proto\";\nmessage Pipeline {}\n");
+        git.add().addFilepattern(".").call();
+        git.commit().setMessage("initial").call();
+        return new GitFixture(repoPath, git);
+    }
+
+    private static void writeRepoFile(Path path, String content) throws IOException {
+        Files.createDirectories(path.getParent());
+        Files.writeString(path, content);
+    }
+
+    private record GitFixture(Path repoPath, Git git) {
+        String repoUri() {
+            return repoPath.toUri().toString();
+        }
+
+        void commitToMain(String relativePath, String content) throws Exception {
+            writeRepoFile(repoPath.resolve(relativePath), content);
+            git.add().addFilepattern(".").call();
+            git.commit().setMessage("update-" + relativePath).call();
+        }
+
+        void createTag(String tagName) throws Exception {
+            git.tag().setName(tagName).setAnnotated(false).call();
         }
     }
 }

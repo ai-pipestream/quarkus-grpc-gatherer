@@ -33,6 +33,8 @@ repositories {
 }
 
 dependencies {
+    implementation 'org.eclipse.jgit:org.eclipse.jgit:7.1.0.202411261347-r'
+
     // The plugin reaches into io.quarkus.gradle.extension.QuarkusPluginExtension
     // to set quarkusBuildProperties. Declared compileOnly so consumers of
     // this plugin do not double-load the Quarkus Gradle plugin - the

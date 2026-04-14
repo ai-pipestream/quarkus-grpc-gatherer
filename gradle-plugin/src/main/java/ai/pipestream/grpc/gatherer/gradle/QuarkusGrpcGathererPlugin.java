@@ -1,6 +1,8 @@
 package ai.pipestream.grpc.gatherer.gradle;
 
 import java.io.File;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.List;
 
 import org.gradle.api.Plugin;
@@ -9,7 +11,10 @@ import org.gradle.api.file.Directory;
 import org.gradle.api.file.FileCollection;
 import org.gradle.api.provider.Provider;
 import org.gradle.api.tasks.TaskProvider;
+import org.eclipse.jgit.transport.CredentialsProvider;
 
+import ai.pipestream.grpc.gatherer.gradle.internal.GitCloneCache;
+import ai.pipestream.grpc.gatherer.gradle.internal.GitCredentials;
 import io.quarkus.gradle.extension.QuarkusPluginExtension;
 
 /**
@@ -97,14 +102,23 @@ public class QuarkusGrpcGathererPlugin implements Plugin<Project> {
         QuarkusGrpcGatherExtension extension = project.getExtensions().create("quarkusGrpcGather",
                 QuarkusGrpcGatherExtension.class);
         extension.getOutputDir().convention(project.getLayout().getBuildDirectory().dir(GATHERER_OUTPUT_SUBDIR));
+        extension.getBufWorkspace().getRef().convention("main");
         extension.getBufWorkspace().getModules().convention(List.of());
+        extension.getBufWorkspace().getProtoSubdir().convention("proto");
         extension.getJarDependencies().getDependencies().convention(List.of());
         extension.getJarDependencies().getScanAll().convention(false);
+        extension.getGit().getRef().convention("main");
+        extension.getGit().getSubdir().convention("proto");
+        extension.getGit().getPaths().convention(List.of());
+        extension.getGit().getModules().convention(List.of());
         extension.getGoogleWkt().getInclude().convention(false);
 
         TaskProvider<GatherProtosTask> gatherProtosProvider = project.getTasks().register("gatherProtos",
                 GatherProtosTask.class, task -> {
                     task.getOutputDir().set(extension.getOutputDir());
+                    task.getGradleUserHome().set(project.getLayout().dir(
+                            project.provider(() -> project.getGradle().getGradleUserHomeDir())));
+                    task.getOffline().set(project.provider(() -> project.getGradle().getStartParameter().isOffline()));
 
                     task.getBufWorkspace().getRepo().set(extension.getBufWorkspace().getRepo());
                     task.getBufWorkspace().getRef().set(extension.getBufWorkspace().getRef());
@@ -113,6 +127,45 @@ public class QuarkusGrpcGathererPlugin implements Plugin<Project> {
                     task.getBufWorkspace().getToken().set(extension.getBufWorkspace().getToken());
                     task.getBufWorkspace().getUsername().set(extension.getBufWorkspace().getUsername());
                     task.getBufWorkspace().getPassword().set(extension.getBufWorkspace().getPassword());
+                    task.getBufWorkspace().getResolvedHeadSha().set(project.provider(() -> {
+                        String repo = extension.getBufWorkspace().getRepo().getOrNull();
+                        if (repo == null || repo.isBlank()) {
+                            return "";
+                        }
+                        String ref = extension.getBufWorkspace().getRef().getOrElse("main");
+                        boolean offline = project.getGradle().getStartParameter().isOffline();
+                        CredentialsProvider credentials = credentialsFrom(extension.getBufWorkspace());
+                        try {
+                            return GitCloneCache.resolveRemoteSha(project.getGradle().getGradleUserHomeDir().toPath(),
+                                    repo, ref, credentials, offline);
+                        } catch (IOException e) {
+                            throw new UncheckedIOException(e);
+                        }
+                    }));
+
+                    task.getGit().getRepo().set(extension.getGit().getRepo());
+                    task.getGit().getRef().set(extension.getGit().getRef());
+                    task.getGit().getSubdir().set(extension.getGit().getSubdir());
+                    task.getGit().getPaths().set(extension.getGit().getPaths());
+                    task.getGit().getModules().set(extension.getGit().getModules());
+                    task.getGit().getToken().set(extension.getGit().getToken());
+                    task.getGit().getUsername().set(extension.getGit().getUsername());
+                    task.getGit().getPassword().set(extension.getGit().getPassword());
+                    task.getGit().getResolvedHeadSha().set(project.provider(() -> {
+                        String repo = extension.getGit().getRepo().getOrNull();
+                        if (repo == null || repo.isBlank()) {
+                            return "";
+                        }
+                        String ref = extension.getGit().getRef().getOrElse("main");
+                        boolean offline = project.getGradle().getStartParameter().isOffline();
+                        CredentialsProvider credentials = credentialsFrom(extension.getGit());
+                        try {
+                            return GitCloneCache.resolveRemoteSha(project.getGradle().getGradleUserHomeDir().toPath(),
+                                    repo, ref, credentials, offline);
+                        } catch (IOException e) {
+                            throw new UncheckedIOException(e);
+                        }
+                    }));
 
                     Provider<FileCollection> runtimeClasspath = project.provider(() ->
                             project.getConfigurations().getByName("runtimeClasspath"));
@@ -152,5 +205,13 @@ public class QuarkusGrpcGathererPlugin implements Plugin<Project> {
                 "ai.pipestream.quarkus-grpc-gatherer: wired grpc-zero to read protos from "
                         + "{} and emit descriptor set as META-INF/grpc/{}",
                 protoDirectory.getOrElse("(unresolved)"), DESCRIPTOR_SET_NAME);
+    }
+
+    private static CredentialsProvider credentialsFrom(BufWorkspaceSpec spec) {
+        return GitCredentials.from(spec.getToken().getOrNull(), spec.getUsername().getOrNull(), spec.getPassword().getOrNull());
+    }
+
+    private static CredentialsProvider credentialsFrom(GitSpec spec) {
+        return GitCredentials.from(spec.getToken().getOrNull(), spec.getUsername().getOrNull(), spec.getPassword().getOrNull());
     }
 }
