@@ -6,6 +6,7 @@ import java.util.List;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.file.Directory;
+import org.gradle.api.file.FileCollection;
 import org.gradle.api.provider.Provider;
 import org.gradle.api.tasks.TaskProvider;
 
@@ -97,6 +98,10 @@ public class QuarkusGrpcGathererPlugin implements Plugin<Project> {
                 QuarkusGrpcGatherExtension.class);
         extension.getOutputDir().convention(project.getLayout().getBuildDirectory().dir(GATHERER_OUTPUT_SUBDIR));
         extension.getBufWorkspace().getModules().convention(List.of());
+        extension.getFilesystem().getDirs().setFrom(List.of());
+        extension.getJarDependencies().getDependencies().convention(List.of());
+        extension.getJarDependencies().getScanAll().convention(false);
+        extension.getGoogleWkt().getInclude().convention(false);
 
         TaskProvider<GatherProtosTask> gatherProtosProvider = project.getTasks().register("gatherProtos",
                 GatherProtosTask.class, task -> {
@@ -109,6 +114,19 @@ public class QuarkusGrpcGathererPlugin implements Plugin<Project> {
                     task.getBufWorkspace().getToken().set(extension.getBufWorkspace().getToken());
                     task.getBufWorkspace().getUsername().set(extension.getBufWorkspace().getUsername());
                     task.getBufWorkspace().getPassword().set(extension.getBufWorkspace().getPassword());
+
+                    Provider<FileCollection> runtimeClasspath = project.provider(() ->
+                            project.getConfigurations().getByName("runtimeClasspath"));
+
+                    task.getFilesystem().getDirs().setFrom(extension.getFilesystem().getDirs());
+                    task.getFilesystem().getScanRoot().set(extension.getFilesystem().getScanRoot());
+
+                    task.getJarDependencies().getDependencies().set(extension.getJarDependencies().getDependencies());
+                    task.getJarDependencies().getScanAll().set(extension.getJarDependencies().getScanAll());
+                    task.getJarDependencies().getResolvedJars().from(runtimeClasspath);
+
+                    task.getGoogleWkt().getInclude().set(extension.getGoogleWkt().getInclude());
+                    task.getGoogleWkt().getProtobufJavaJar().from(runtimeClasspath);
                 });
 
         project.getTasks().matching(t -> "quarkusGenerateCode".equals(t.getName()))
