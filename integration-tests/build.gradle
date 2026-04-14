@@ -1,9 +1,5 @@
 plugins {
     id 'io.quarkus'
-    // Configures quarkusBuildProperties so grpc-zero reads protos from
-    // build/gathered-protos/proto and emits a descriptor set. Included
-    // from the gradle-plugin/ subproject via settings.gradle's
-    // pluginManagement.includeBuild - no version required.
     id 'ai.pipestream.quarkus-grpc-gatherer'
 }
 
@@ -16,10 +12,11 @@ dependencies {
         exclude group: 'io.quarkus', module: 'quarkus-grpc-codegen'
     }
     implementation 'io.quarkiverse.grpc.zero:quarkus-grpc-zero:0.0.8'
-    implementation 'io.grpc:grpc-services:1.72.0'
 
+    testImplementation gradleTestKit()
+    testImplementation 'org.eclipse.jgit:org.eclipse.jgit:7.1.0.202411261347-r'
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.13.4'
     testImplementation 'io.quarkus:quarkus-junit5'
-    testImplementation 'io.rest-assured:rest-assured'
 }
 
 tasks.named('compileJava') {
@@ -28,4 +25,19 @@ tasks.named('compileJava') {
 
 tasks.named('compileTestJava') {
     dependsOn 'quarkusGenerateCode'
+}
+
+quarkusGrpcGather {
+    filesystem {
+        dirs.from(file('src/test/resources/fixtures'))
+    }
+}
+
+quarkus {
+    set('grpc-gather.enabled', 'true')
+}
+
+tasks.named('test') {
+    dependsOn 'quarkusBuild'
+    classpath += files(layout.buildDirectory.file('quarkus-app/quarkus/generated-bytecode.jar'))
 }

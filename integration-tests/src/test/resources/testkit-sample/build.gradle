@@ -1,0 +1,28 @@
+plugins {
+    id 'io.quarkus' version '3.34.3'
+    id 'ai.pipestream.quarkus-grpc-gatherer'
+}
+
+dependencies {
+    implementation platform('io.quarkus.platform:quarkus-bom:3.34.3')
+    implementation 'io.quarkus:quarkus-arc'
+    implementation 'ai.pipestream:quarkus-grpc-gatherer'
+    implementation('io.quarkus:quarkus-grpc-stubs') {
+        exclude group: 'io.quarkus', module: 'quarkus-grpc-codegen'
+    }
+    implementation 'io.quarkiverse.grpc.zero:quarkus-grpc-zero:0.0.8'
+}
+
+quarkusGrpcGather {
+    filesystem {
+        dirs.from(file('test-protos'))
+    }
+}
+
+quarkus {
+    set('grpc-gather.enabled', 'true')
+}
+
+tasks.withType(Test).configureEach {
+    failOnNoDiscoveredTests = false
+}
