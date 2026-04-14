@@ -27,7 +27,7 @@ final class ProtoFileCopier {
             List<Path> protos = files
                     .filter(Files::isRegularFile)
                     .filter(p -> p.getFileName().toString().endsWith(".proto"))
-                    .filter(ProtoFileCopier::notANegativeFixture)
+                    .filter(ProtoFileCopier::shouldIncludeProtoFile)
                     .toList();
             for (Path proto : protos) {
                 Path rel = root.relativize(proto);
@@ -71,7 +71,7 @@ final class ProtoFileCopier {
                 .collect(Collectors.toList());
     }
 
-    static boolean notANegativeFixture(Path p) {
+    static boolean shouldIncludeProtoFile(Path p) {
         String s = p.toString().replace('\\', '/');
         return !s.contains("/invalids/") && !s.contains("/dir/") && !s.contains("invalid.proto");
     }

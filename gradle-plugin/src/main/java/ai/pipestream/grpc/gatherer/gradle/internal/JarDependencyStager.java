@@ -57,11 +57,11 @@ public final class JarDependencyStager {
                     continue;
                 }
                 Path asPath = Path.of(normalized);
-                if (!ProtoFileCopier.notANegativeFixture(asPath)) {
+                if (!ProtoFileCopier.shouldIncludeProtoFile(asPath)) {
                     continue;
                 }
                 String relative = ProtoFileCopier.stripProtoPrefix(normalized);
-                Path staged = targetDir.resolve(relative).normalize();
+                Path staged = resolveSafeTarget(targetDir, relative);
                 Files.createDirectories(staged.getParent());
                 try (InputStream in = zip.getInputStream(entry)) {
                     Files.copy(in, staged, StandardCopyOption.REPLACE_EXISTING);
@@ -87,5 +87,15 @@ public final class JarDependencyStager {
             }
         }
         return false;
+    }
+
+    private static Path resolveSafeTarget(Path targetDir, String relative) throws IOException {
+        Path normalized = targetDir.resolve(relative).normalize();
+        Path normalizedTargetDir = targetDir.toAbsolutePath().normalize();
+        Path normalizedAbsolute = normalized.toAbsolutePath().normalize();
+        if (!normalizedAbsolute.startsWith(normalizedTargetDir)) {
+            throw new IOException("Unsafe archive entry path: " + relative);
+        }
+        return normalizedAbsolute;
     }
 }

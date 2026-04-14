@@ -100,7 +100,7 @@ class GatherProtosTaskTest {
                         scanRoot = '%s'
                     }
                 }
-                """.formatted(scanRoot.toString().replace("\\", "\\\\")));
+                """.formatted(scanRoot.toString().replace("\\", "/")));
 
         BuildResult result = runGatherProtos();
         assertEquals(TaskOutcome.SUCCESS, result.task(":gatherProtos").getOutcome());

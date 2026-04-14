@@ -52,7 +52,7 @@ public final class StagingMerger {
             List<Path> protos = files
                     .filter(Files::isRegularFile)
                     .filter(p -> p.getFileName().toString().endsWith(".proto"))
-                    .filter(ProtoFileCopier::notANegativeFixture)
+                    .filter(ProtoFileCopier::shouldIncludeProtoFile)
                     .toList();
             for (Path proto : protos) {
                 String relStr = sourceDir.relativize(proto).toString().replace('\\', '/');
