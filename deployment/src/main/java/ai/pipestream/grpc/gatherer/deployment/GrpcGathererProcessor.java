@@ -18,6 +18,10 @@ import io.quarkus.deployment.pkg.builditem.OutputTargetBuildItem;
  * Build-time processor for the quarkus-grpc-gatherer extension. Registers the
  * feature and routes the grpc-zero-generated {@code FileDescriptorSet} onto
  * the application classpath at {@code META-INF/grpc/services.dsc}.
+ *
+ * <p>This type is public so Gradle's standard `withJavadocJar()` publication
+ * for the `quarkus-grpc-gatherer-deployment` artifact still has at least one
+ * documentable type after removing the old CodeGenProvider implementation.
  */
 public class GrpcGathererProcessor {
 
