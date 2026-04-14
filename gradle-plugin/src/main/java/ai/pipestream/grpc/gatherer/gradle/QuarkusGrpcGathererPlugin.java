@@ -1,11 +1,13 @@
 package ai.pipestream.grpc.gatherer.gradle;
 
 import java.io.File;
+import java.util.List;
 
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.file.Directory;
 import org.gradle.api.provider.Provider;
+import org.gradle.api.tasks.TaskProvider;
 
 import io.quarkus.gradle.extension.QuarkusPluginExtension;
 
@@ -90,6 +92,27 @@ public class QuarkusGrpcGathererPlugin implements Plugin<Project> {
                             + "QuarkusPluginExtension not found; gatherer wiring skipped.");
             return;
         }
+
+        QuarkusGrpcGatherExtension extension = project.getExtensions().create("quarkusGrpcGather",
+                QuarkusGrpcGatherExtension.class);
+        extension.getOutputDir().convention(project.getLayout().getBuildDirectory().dir(GATHERER_OUTPUT_SUBDIR));
+        extension.getBufWorkspace().getModules().convention(List.of());
+
+        TaskProvider<GatherProtosTask> gatherProtosProvider = project.getTasks().register("gatherProtos",
+                GatherProtosTask.class, task -> {
+                    task.getOutputDir().set(extension.getOutputDir());
+
+                    task.getBufWorkspace().getRepo().set(extension.getBufWorkspace().getRepo());
+                    task.getBufWorkspace().getRef().set(extension.getBufWorkspace().getRef());
+                    task.getBufWorkspace().getModules().set(extension.getBufWorkspace().getModules());
+                    task.getBufWorkspace().getProtoSubdir().set(extension.getBufWorkspace().getProtoSubdir());
+                    task.getBufWorkspace().getToken().set(extension.getBufWorkspace().getToken());
+                    task.getBufWorkspace().getUsername().set(extension.getBufWorkspace().getUsername());
+                    task.getBufWorkspace().getPassword().set(extension.getBufWorkspace().getPassword());
+                });
+
+        project.getTasks().matching(t -> "quarkusGenerateCode".equals(t.getName()))
+                .configureEach(t -> t.dependsOn(gatherProtosProvider));
 
         Provider<String> protoDirectory = project.getLayout().getBuildDirectory()
                 .dir(GATHERER_OUTPUT_SUBDIR)
