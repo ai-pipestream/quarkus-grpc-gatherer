@@ -1,0 +1,19 @@
+pluginManagement {
+    includeBuild('__REPO_ROOT__/gradle-plugin')
+    repositories {
+        mavenLocal()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositories {
+        mavenLocal()
+        mavenCentral()
+    }
+}
+
+rootProject.name = 'testkit-sample'
+
+includeBuild('__REPO_ROOT__')

@@ -1,26 +1,24 @@
 plugins {
-    id 'io.quarkus'
+    id 'io.quarkus' version '3.34.3'
     id 'ai.pipestream.quarkus-grpc-gatherer'
 }
 
 dependencies {
     implementation platform('io.quarkus.platform:quarkus-bom:3.34.3')
     implementation 'io.quarkus:quarkus-arc'
-
-    implementation project(':quarkus-grpc-gatherer')
+    implementation 'ai.pipestream:quarkus-grpc-gatherer'
     implementation('io.quarkus:quarkus-grpc-stubs') {
         exclude group: 'io.quarkus', module: 'quarkus-grpc-codegen'
     }
     implementation 'io.quarkiverse.grpc.zero:quarkus-grpc-zero:0.0.8'
-
-    testImplementation gradleTestKit()
-    testImplementation 'org.eclipse.jgit:org.eclipse.jgit:7.1.0.202411261347-r'
-    testImplementation 'org.junit.jupiter:junit-jupiter:5.13.4'
-    testImplementation 'io.quarkus:quarkus-junit5'
 }
 
 quarkusGrpcGather {
     filesystem {
-        dirs.from(file('src/test/resources/fixtures'))
+        dirs.from(file('test-protos'))
     }
+}
+
+tasks.withType(Test).configureEach {
+    failOnNoDiscoveredTests = false
 }

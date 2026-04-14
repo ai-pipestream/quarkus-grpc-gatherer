@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package schemas;
+
+option java_package = "ai.pipestream.grpc.gatherer.fixtures.schemas";
+option java_outer_classname = "CommonProto";
+
+message CommonRequest {
+  string query = 1;
+}
+
+message CommonResponse {
+  string result = 1;
+}
