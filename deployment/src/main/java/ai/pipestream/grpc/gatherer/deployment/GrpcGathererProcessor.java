@@ -6,7 +6,6 @@ import java.nio.file.Path;
 
 import org.jboss.logging.Logger;
 
-import ai.pipestream.grpc.gatherer.runtime.GrpcGatherBuildTimeConfig;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.builditem.FeatureBuildItem;
@@ -87,19 +86,23 @@ public class GrpcGathererProcessor {
      * <p>The descriptor is also registered as a native-image resource so
      * GraalVM builds keep the file accessible.
      *
-     * @param config the gatherer build-time configuration
+     * <p>The BuildStep is unconditional: if grpc-zero produced a descriptor
+     * file at the expected path, it is routed; if not, a warning is logged
+     * and the BuildStep is a no-op. The natural file-existence check below
+     * is the only gate. Earlier versions of this extension required a
+     * {@code quarkus.grpc-gather.enabled=true} MicroProfile config flag to
+     * arm the BuildStep, but that flag is gone in 0.2.x — the new control
+     * surface is simply applying the {@code ai.pipestream.quarkus-grpc-gatherer}
+     * Gradle plugin.
+     *
      * @param outputTarget provides the Quarkus output directory
      * @param generatedResources producer for runtime classpath resources
      * @param nativeResources producer for native-image resources
      */
     @BuildStep
-    void routeGrpcDescriptorSetToResources(GrpcGatherBuildTimeConfig config,
-            OutputTargetBuildItem outputTarget,
+    void routeGrpcDescriptorSetToResources(OutputTargetBuildItem outputTarget,
             BuildProducer<GeneratedResourceBuildItem> generatedResources,
             BuildProducer<NativeImageResourceBuildItem> nativeResources) {
-        if (!config.enabled()) {
-            return;
-        }
         Path buildDir = outputTarget.getOutputDirectory();
         Path descriptor = buildDir.resolve(GRPC_ZERO_OUTPUT_RELATIVE).resolve(DESCRIPTOR_FILENAME);
         if (!Files.isRegularFile(descriptor)) {
