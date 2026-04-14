@@ -1,13 +1,13 @@
 package ai.pipestream.grpc.gatherer.gradle;
 
 import java.io.File;
+import java.util.List;
 
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.file.Directory;
 import org.gradle.api.provider.Provider;
-
-import io.quarkus.gradle.extension.QuarkusPluginExtension;
+import org.gradle.api.tasks.TaskProvider;
 
 /**
  * Gradle plugin that wires {@code quarkus-grpc-gatherer} and
@@ -83,13 +83,35 @@ public class QuarkusGrpcGathererPlugin implements Plugin<Project> {
     }
 
     private static void configure(Project project) {
-        QuarkusPluginExtension quarkus = project.getExtensions().findByType(QuarkusPluginExtension.class);
+        Object quarkus = project.getExtensions().findByName("quarkus");
         if (quarkus == null) {
             project.getLogger().warn(
                     "ai.pipestream.quarkus-grpc-gatherer: Quarkus plugin applied but "
                             + "QuarkusPluginExtension not found; gatherer wiring skipped.");
             return;
         }
+
+        QuarkusGrpcGatherExtension extension = project.getExtensions().create("quarkusGrpcGather",
+                QuarkusGrpcGatherExtension.class);
+        extension.getOutputDir().convention(project.getLayout().getBuildDirectory().dir(GATHERER_OUTPUT_SUBDIR));
+        extension.getBufWorkspace().getModules().convention(List.of());
+
+        TaskProvider<GatherProtosTask> gatherProtosProvider = project.getTasks().register("gatherProtos",
+                GatherProtosTask.class, task -> {
+                    task.getOutputDir().convention(project.getLayout().getBuildDirectory().dir(GATHERER_OUTPUT_SUBDIR));
+                    task.getOutputDir().set(extension.getOutputDir());
+
+                    task.getBufWorkspace().getRepo().set(extension.getBufWorkspace().getRepo());
+                    task.getBufWorkspace().getRef().set(extension.getBufWorkspace().getRef());
+                    task.getBufWorkspace().getModules().set(extension.getBufWorkspace().getModules());
+                    task.getBufWorkspace().getProtoSubdir().set(extension.getBufWorkspace().getProtoSubdir());
+                    task.getBufWorkspace().getToken().set(extension.getBufWorkspace().getToken());
+                    task.getBufWorkspace().getUsername().set(extension.getBufWorkspace().getUsername());
+                    task.getBufWorkspace().getPassword().set(extension.getBufWorkspace().getPassword());
+                });
+
+        project.getTasks().matching(t -> "quarkusGenerateCode".equals(t.getName()))
+                .configureEach(t -> t.dependsOn(gatherProtosProvider));
 
         Provider<String> protoDirectory = project.getLayout().getBuildDirectory()
                 .dir(GATHERER_OUTPUT_SUBDIR)
@@ -102,15 +124,24 @@ public class QuarkusGrpcGathererPlugin implements Plugin<Project> {
         //   quarkus.grpc.codegen.proto-directory
         //   quarkus.generate-code.grpc.descriptor-set.generate
         //   quarkus.generate-code.grpc.descriptor-set.name
-        quarkus.set("grpc.codegen.proto-directory", protoDirectory);
-        quarkus.set("generate-code.grpc.descriptor-set.generate",
+        setQuarkusBuildProperty(quarkus, "grpc.codegen.proto-directory", protoDirectory);
+        setQuarkusBuildProperty(quarkus, "generate-code.grpc.descriptor-set.generate",
                 project.provider(() -> "true"));
-        quarkus.set("generate-code.grpc.descriptor-set.name",
+        setQuarkusBuildProperty(quarkus, "generate-code.grpc.descriptor-set.name",
                 project.provider(() -> DESCRIPTOR_SET_NAME));
 
         project.getLogger().info(
                 "ai.pipestream.quarkus-grpc-gatherer: wired grpc-zero to read protos from "
                         + "{} and emit descriptor set as META-INF/grpc/{}",
                 protoDirectory.getOrElse("(unresolved)"), DESCRIPTOR_SET_NAME);
+    }
+
+    private static void setQuarkusBuildProperty(Object quarkus, String key, Provider<String> value) {
+        try {
+            quarkus.getClass().getMethod("set", String.class, Provider.class).invoke(quarkus, key, value);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(
+                    "ai.pipestream.quarkus-grpc-gatherer: failed to set Quarkus build property " + key, e);
+        }
     }
 }

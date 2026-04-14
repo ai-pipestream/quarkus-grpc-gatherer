@@ -38,6 +38,15 @@ dependencies {
     // this plugin do not double-load the Quarkus Gradle plugin - the
     // consumer's io.quarkus plugin application provides it at runtime.
     compileOnly 'io.quarkus:gradle-application-plugin:3.34.3'
+    testRuntimeOnly 'io.quarkus:gradle-application-plugin:3.34.3'
+
+    testImplementation gradleTestKit()
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.13.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.13.4'
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
 }
 
 gradlePlugin {
