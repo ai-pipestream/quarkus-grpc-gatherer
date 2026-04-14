@@ -146,6 +146,8 @@ public final class GitCloneCache {
             throws IOException {
         try (Git git = Git.open(cacheDir.toFile())) {
             FetchCommand fetch = git.fetch().setRemote("origin");
+            // TODO(#9): always fetch heads+tags even for SHA refs; fetch-by-SHA requires
+            // uploadpack.allowReachableSHA1InWant which GitHub/GitLab default OFF.
             if (COMMIT_SHA.matcher(ref).matches()) {
                 fetch.setRefSpecs(new RefSpec(ref));
             } else {
