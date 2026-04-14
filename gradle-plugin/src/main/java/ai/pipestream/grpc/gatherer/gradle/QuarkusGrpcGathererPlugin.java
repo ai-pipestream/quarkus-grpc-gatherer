@@ -9,6 +9,8 @@ import org.gradle.api.file.Directory;
 import org.gradle.api.provider.Provider;
 import org.gradle.api.tasks.TaskProvider;
 
+import io.quarkus.gradle.extension.QuarkusPluginExtension;
+
 /**
  * Gradle plugin that wires {@code quarkus-grpc-gatherer} and
  * {@code quarkus-grpc-zero} into a Quarkus Gradle build with zero
@@ -83,7 +85,7 @@ public class QuarkusGrpcGathererPlugin implements Plugin<Project> {
     }
 
     private static void configure(Project project) {
-        Object quarkus = project.getExtensions().findByName("quarkus");
+        QuarkusPluginExtension quarkus = project.getExtensions().findByType(QuarkusPluginExtension.class);
         if (quarkus == null) {
             project.getLogger().warn(
                     "ai.pipestream.quarkus-grpc-gatherer: Quarkus plugin applied but "
@@ -123,24 +125,15 @@ public class QuarkusGrpcGathererPlugin implements Plugin<Project> {
         //   quarkus.grpc.codegen.proto-directory
         //   quarkus.generate-code.grpc.descriptor-set.generate
         //   quarkus.generate-code.grpc.descriptor-set.name
-        setQuarkusBuildProperty(quarkus, "grpc.codegen.proto-directory", protoDirectory);
-        setQuarkusBuildProperty(quarkus, "generate-code.grpc.descriptor-set.generate",
+        quarkus.set("grpc.codegen.proto-directory", protoDirectory);
+        quarkus.set("generate-code.grpc.descriptor-set.generate",
                 project.provider(() -> "true"));
-        setQuarkusBuildProperty(quarkus, "generate-code.grpc.descriptor-set.name",
+        quarkus.set("generate-code.grpc.descriptor-set.name",
                 project.provider(() -> DESCRIPTOR_SET_NAME));
 
         project.getLogger().info(
                 "ai.pipestream.quarkus-grpc-gatherer: wired grpc-zero to read protos from "
                         + "{} and emit descriptor set as META-INF/grpc/{}",
                 protoDirectory.getOrElse("(unresolved)"), DESCRIPTOR_SET_NAME);
-    }
-
-    private static void setQuarkusBuildProperty(Object quarkus, String key, Provider<String> value) {
-        try {
-            quarkus.getClass().getMethod("set", String.class, Provider.class).invoke(quarkus, key, value);
-        } catch (ReflectiveOperationException e) {
-            throw new IllegalStateException(
-                    "ai.pipestream.quarkus-grpc-gatherer: failed to set Quarkus build property " + key, e);
-        }
     }
 }

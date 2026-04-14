@@ -49,6 +49,18 @@ tasks.withType(Test).configureEach {
     useJUnitPlatform()
 }
 
+configurations {
+    testPluginClasspath
+}
+
+dependencies {
+    testPluginClasspath 'io.quarkus:gradle-application-plugin:3.34.3'
+}
+
+tasks.named('pluginUnderTestMetadata').configure {
+    pluginClasspath.from(configurations.testPluginClasspath)
+}
+
 gradlePlugin {
     website = 'https://github.com/ai-pipestream/quarkus-grpc-gatherer'
     vcsUrl = 'https://github.com/ai-pipestream/quarkus-grpc-gatherer'
