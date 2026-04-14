@@ -1,126 +1,175 @@
 # Quarkus gRPC Gatherer
 
-`quarkus-grpc-gatherer` is a Quarkus extension that gathers `.proto` files from multiple sources before gRPC code generation.
+`quarkus-grpc-gatherer` stages `.proto` files from multiple sources before grpc-zero generates Java stubs. Use it when you need to aggregate protos from local files, jars, and git/buf repos, and when you want a descriptor set packaged at `META-INF/grpc/services.dsc` for runtime reflection consumers.
 
-It is designed to pair with [`quarkus-grpc-zero`](https://github.com/quarkiverse/quarkus-grpc-zero): the gatherer materializes proto inputs, and grpc-zero generates Java/Mutiny stubs and (optionally) a `FileDescriptorSet`.
-
-## What it does
-
-At Quarkus `init()` time (before any `CodeGenProvider.trigger()` runs) the gatherer:
-
-1. Runs every configured `ProtoGatherer` implementation (discovered via `ServiceLoader`) and stages each source's `.proto` files under `build/gathered-protos-staging/<source>/`.
-2. Merges every staging subdirectory into `build/gathered-protos/proto/` with content-hash dedup and conflict reporting.
-3. Creates an empty `build/gathered-protos/java/` directory so consumers can declare it as a Java source directory without Gradle warning about a missing path.
-
-The gatherer never touches the source tree. There is no `src/main/proto` mirror.
-
-Built-in `ProtoGatherer` implementations cover:
-
-- **Filesystem directories** (`FilesystemGatherer`) — explicit list of dirs
-- **Filesystem scan** (`FilesystemScanGatherer`) — walk a root and harvest every `src/main/proto` / `src/main/resources` it finds
-- **JAR dependencies** (`JarDependencyGatherer`) — extract `.proto` from named runtime deps or scan-all
-- **Git repository** (`GitRepoGatherer`) — clone + pick files via `git-subdir` + `git-paths` or `git-modules`
-- **Buf-style multi-module workspace** (`BufWorkspaceGatherer`) — clone once, flatten each module's `proto/` subdir onto a shared root so cross-module imports resolve
-- **Google Well-Known Types** (`GoogleWktGatherer`) — extract `google/protobuf/*.proto` from `com.google.protobuf:protobuf-java`
-
-## Hooking the staged protos into grpc-zero
-
-Quarkus's Gradle plugin computes the "source parents" passed to every `CodeGenProvider` as `Path::getParent` of every Java `srcDir` of the main source set (see `io.quarkus.gradle.QuarkusPlugin#getSourcesParents`). grpc-zero's `inputDirectory()` is `"proto"`, so each source parent resolves to `<sourceParent>/proto`.
-
-To make Quarkus see `build/gathered-protos/proto` as a grpc-zero input, add one line to your Gradle build script:
+## Quick start
 
 ```gradle
-sourceSets.main.java.srcDirs += file("${buildDir}/gathered-protos/java")
-```
-
-No `src/main/proto` mirror, no system properties, no absolute paths in `application.properties`.
-
-## Configuration
-
-All keys are build-time and use the `quarkus.grpc-gather.*` prefix.
-
-### Core
-
-| Key | Description | Default |
-|---|---|---|
-| `quarkus.grpc-gather.enabled` | Enable the gatherer | `false` |
-| `quarkus.grpc-gather.excludes` | Comma-separated path globs to exclude from staging | unset |
-
-### Filesystem sources
-
-| Key | Description | Default |
-|---|---|---|
-| `quarkus.grpc-gather.filesystem-dirs` | Comma-separated source dirs | unset |
-| `quarkus.grpc-gather.filesystem-scan-root` | Root to walk for `src/main/proto` / `src/main/resources` dirs | unset |
-
-### Jar dependencies
-
-| Key | Description | Default |
-|---|---|---|
-| `quarkus.grpc-gather.jar-dependencies` | Comma-separated `groupId:artifactId` list | unset |
-| `quarkus.grpc-gather.jar-scan-all` | Scan every runtime dep for `.proto` | `false` |
-| `quarkus.grpc-gather.include-google-wkt` | Include Google well-known types from `protobuf-java` (staged separately; not merged) | `false` |
-
-### Git repository (single layout)
-
-| Key | Description | Default |
-|---|---|---|
-| `quarkus.grpc-gather.git-repo` | Git repo URI | unset |
-| `quarkus.grpc-gather.git-ref` | Git ref/branch/tag | `main` |
-| `quarkus.grpc-gather.git-subdir` | Proto subdir in git checkout | `proto` |
-| `quarkus.grpc-gather.git-paths` | Optional CSV file/dir filters under `git-subdir` | unset |
-| `quarkus.grpc-gather.git-modules` | Optional CSV of top-level module dirs (non-buf layout) | unset |
-| `quarkus.grpc-gather.git-username` / `git-password` / `git-token` | Auth | unset |
-
-### Buf-workspace git repository
-
-Use this when the repo is a buf workspace with each module's protos under `<module>/proto/`. The gatherer detects the `proto/` subdir per module and flattens everything onto a single root so cross-module imports resolve.
-
-| Key | Description | Default |
-|---|---|---|
-| `quarkus.grpc-gather.buf-workspace-repo` | Git repo URI | unset |
-| `quarkus.grpc-gather.buf-workspace-ref` | Git ref | `main` |
-| `quarkus.grpc-gather.buf-workspace-modules` | CSV of module directory names | unset |
-| `quarkus.grpc-gather.buf-workspace-proto-subdir` | Per-module proto subdir | `proto` |
-| `quarkus.grpc-gather.buf-workspace-token` / `-username` / `-password` | Auth | unset |
-
-## Gradle usage
-
-```gradle
-dependencies {
-  implementation "ai.pipestream:quarkus-grpc-gatherer:0.1.0-SNAPSHOT"
-  implementation "io.quarkiverse.grpc.zero:quarkus-grpc-zero:0.0.8"
-  // Real gRPC server? keep quarkus-grpc but drop its codegen, which grpc-zero replaces.
-  implementation("io.quarkus:quarkus-grpc") {
-    exclude group: "io.quarkus", module: "quarkus-grpc-codegen"
-  }
+plugins {
+    id 'io.quarkus' version '3.34.3'
+    id 'ai.pipestream.quarkus-grpc-gatherer' version '0.2.0'
 }
 
-// Make Quarkus see build/gathered-protos/proto as a grpc-zero input.
-sourceSets.main.java.srcDirs += file("${buildDir}/gathered-protos/java")
+dependencies {
+    implementation 'ai.pipestream:quarkus-grpc-gatherer:0.2.0'
+    implementation('io.quarkus:quarkus-grpc') {
+        exclude group: 'io.quarkus', module: 'quarkus-grpc-codegen'
+    }
+}
+
+quarkusGrpcGather {
+    filesystem {
+        dirs.from(file('src/main/proto'))
+    }
+}
 ```
 
-```properties
-quarkus.grpc-gather.enabled=true
+`quarkus-grpc-zero` is brought in transitively by `quarkus-grpc-gatherer`.
+If you only need generated message types (no gRPC server), replace `io.quarkus:quarkus-grpc` with `io.quarkus:quarkus-grpc-stubs`, or omit both entirely.
+No gather-specific keys are needed in `application.properties` on 0.2.x.
 
-# Example: gather two modules from a buf workspace repo
-quarkus.grpc-gather.buf-workspace-repo=https://github.com/ai-pipestream/pipestream-protos.git
-quarkus.grpc-gather.buf-workspace-ref=main
-quarkus.grpc-gather.buf-workspace-modules=common,pipeline-module
+## Full DSL example
+
+```gradle
+quarkusGrpcGather {
+    outputDir = layout.buildDirectory.dir('gathered-protos/proto').get()
+
+    filesystem {
+        dirs.from(sourceSets.main.resources.srcDirs)
+        dirs.from(file('src/main/proto'))
+        scanRoot = layout.projectDirectory.dir('..').asFile.absolutePath
+    }
+
+    jarDependencies {
+        dependencies = ['com.example:common-protos', 'com.example:pipeline-protos']
+        scanAll = false
+    }
+
+    googleWkt {
+        include = true
+    }
+
+    git {
+        repo = 'https://github.com/example/schemas.git'
+        ref = providers.gradleProperty('schemaRef').orElse('main').get()
+        subdir = 'proto'
+        paths = ['common.proto', 'pipeline/']
+        token = providers.environmentVariable('GH_TOKEN').orNull
+    }
+
+    bufWorkspace {
+        repo = 'https://github.com/example/protos-workspace.git'
+        ref = providers.gradleProperty('workspaceRef').orElse('main').get()
+        modules = ['common', 'pipeline-module']
+        protoSubdir = 'proto'
+        token = providers.environmentVariable('GH_TOKEN').orNull
+    }
+}
 ```
 
-## Descriptor set generation
+## Source types
 
-grpc-zero emits a `FileDescriptorSet` when you set:
+### `filesystem` — local directories
 
-```properties
-quarkus.generate-code.grpc.descriptor-set.generate=true
-quarkus.generate-code.grpc.descriptor-set.name=services.dsc
+```gradle
+quarkusGrpcGather {
+    filesystem {
+        dirs.from(file('src/main/proto'))
+        dirs.from(files('../shared/protos', '../contracts/proto'))
+        scanRoot = file('../../').absolutePath // optional: find nested src/main/proto trees
+    }
+}
 ```
 
-The file lands in grpc-zero's default codegen output directory (`build/classes/java/quarkus-generated-sources/grpc/services.dsc` for Gradle). That path is compiled Java output, not a resource — so runtime consumers that load descriptors from the classpath will not find it there.
+### `jarDependencies` — protos packaged inside jars
 
-To expose it at `META-INF/grpc/services.dsc` (the path pipestream's `GoogleDescriptorLoader` looks up by default), add a `processResources.from()` block:
+```gradle
+quarkusGrpcGather {
+    jarDependencies {
+        dependencies = ['com.example:common-protos', 'com.example:pipeline-protos']
+        scanAll = false // true = scan every runtime dependency for .proto files
+    }
+}
+```
+
+### `googleWkt` — Google Well-Known Types
+
+```gradle
+quarkusGrpcGather {
+    googleWkt {
+        include = true
+    }
+}
+```
+
+Well-known types are staged for imports but are not merged into the final output tree.
+
+### `git` — single-repo layout
+
+```gradle
+quarkusGrpcGather {
+    git {
+        repo = 'https://github.com/example/schemas.git'
+        ref = 'main' // default: main
+        subdir = 'proto' // default: proto
+        paths = ['common.proto', 'pipeline/'] // optional filters under subdir
+        modules = ['common', 'pipeline'] // optional module dirs, overrides paths
+        token = providers.environmentVariable('GH_TOKEN').orNull
+        username = providers.environmentVariable('GIT_USERNAME').orNull
+        password = providers.environmentVariable('GIT_PASSWORD').orNull
+    }
+}
+```
+
+### `bufWorkspace` — buf-style multi-module repository
+
+```gradle
+quarkusGrpcGather {
+    bufWorkspace {
+        repo = 'https://github.com/example/protos-workspace.git'
+        ref = 'main'
+        modules = ['common', 'pipeline-module']
+        protoSubdir = 'proto' // default: proto
+        token = providers.environmentVariable('GH_TOKEN').orNull
+        username = providers.environmentVariable('GIT_USERNAME').orNull
+        password = providers.environmentVariable('GIT_PASSWORD').orNull
+    }
+}
+```
+
+Each configured module contributes `<module>/<protoSubdir>/**.proto` into the shared gathered tree.
+
+## Configuration reference
+
+The full DSL model and property types are documented in the [`QuarkusGrpcGatherExtension` Javadoc](gradle-plugin/src/main/java/ai/pipestream/grpc/gatherer/gradle/QuarkusGrpcGatherExtension.java).
+
+## How the Gradle plugin auto-wires everything
+
+When `ai.pipestream.quarkus-grpc-gatherer` is applied alongside `io.quarkus`, it registers `gatherProtos` and wires `quarkusGenerateCode` to depend on it.
+
+It also writes these `quarkusBuildProperties` entries before codegen starts:
+
+- `quarkus.grpc.codegen.proto-directory` → absolute path of `build/gathered-protos/proto`
+- `quarkus.generate-code.grpc.descriptor-set.generate` → `true`
+- `quarkus.generate-code.grpc.descriptor-set.name` → `services.dsc`
+
+This guarantees grpc-zero reads gathered inputs and emits the descriptor set with a stable filename.
+
+## Cache behavior
+
+Git and buf checkouts are cached persistently under:
+
+- `$gradleUserHome/caches/grpc-gatherer/<repo-hash>`
+
+Behavior:
+
+- Normal mode: first run clones, later runs `fetch + reset` in the cache
+- `--offline`: uses the cached checkout only (fails if no cache exists)
+- Force re-run of gather logic: `./gradlew gatherProtos --rerun`
+
+## Descriptor set packaging
+
+`services.dsc` is generated during `quarkusGenerateCode`. To package it in your runtime jar at `META-INF/grpc/services.dsc`:
 
 ```gradle
 tasks.named('processResources').configure {
@@ -132,27 +181,12 @@ tasks.named('processResources').configure {
 }
 ```
 
-After a build, `services.dsc` will be present in the final jar at `META-INF/grpc/services.dsc`.
+## Maven support
 
-## Maven usage
-
-```xml
-<dependency>
-  <groupId>ai.pipestream</groupId>
-  <artifactId>quarkus-grpc-gatherer</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
-</dependency>
-<dependency>
-  <groupId>io.quarkiverse.grpc.zero</groupId>
-  <artifactId>quarkus-grpc-zero</artifactId>
-  <version>0.0.8</version>
-</dependency>
-```
-
-Maven handles source roots and resources differently from Gradle; the equivalent hooks are not documented here yet.
+Maven support is not yet available in 0.2.x. Existing Maven consumers should stay on 0.1.x until a Maven Mojo is released.
 
 ## Build
 
 ```bash
-./gradlew clean build
+./gradlew build --no-daemon
 ```
