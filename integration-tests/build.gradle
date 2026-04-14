@@ -8,7 +8,6 @@ dependencies {
     implementation 'io.quarkus:quarkus-arc'
 
     implementation project(':quarkus-grpc-gatherer')
-    implementation project(':quarkus-grpc-gatherer-deployment')
     implementation('io.quarkus:quarkus-grpc-stubs') {
         exclude group: 'io.quarkus', module: 'quarkus-grpc-codegen'
     }
