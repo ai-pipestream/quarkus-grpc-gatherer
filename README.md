@@ -157,6 +157,8 @@ It also writes these `quarkusBuildProperties` entries before codegen starts:
 
 This guarantees grpc-zero reads gathered inputs and emits the descriptor set with a stable filename.
 
+After grpc-zero writes `services.dsc`, the extension's deployment-side `GrpcGathererProcessor` BuildStep reads it off disk and emits it as a `GeneratedResourceBuildItem` at the classpath path `META-INF/grpc/services.dsc`. Quarkus packages that entry into the production runtime jar (`quarkus-app/quarkus/generated-bytecode.jar`) and, for `@QuarkusTest` runs, serves it through the `MemoryClassPathElement` chain attached to the runtime `QuarkusClassLoader`. Runtime consumers such as pipestream's `GoogleDescriptorLoader` — or any call to `Thread.currentThread().getContextClassLoader().getResourceAsStream("META-INF/grpc/services.dsc")` — find the descriptor automatically. **No consumer-side `processResources.from(...)` block, no manual `Copy` task, no `sourceSets` fiddling is required.**
+
 ## Cache behavior
 
 Git and buf checkouts are cached persistently under:
@@ -168,20 +170,6 @@ Behavior:
 - Normal mode: first run clones, later runs `fetch + reset` in the cache
 - `--offline`: uses the cached checkout only (fails if no cache exists)
 - Force re-run of gather logic: `./gradlew gatherProtos --rerun`
-
-## Descriptor set packaging
-
-`services.dsc` is generated during `quarkusGenerateCode`. To package it in your runtime jar at `META-INF/grpc/services.dsc`:
-
-```gradle
-tasks.named('processResources').configure {
-    dependsOn 'quarkusGenerateCode'
-    from(layout.buildDirectory.dir('classes/java/quarkus-generated-sources/grpc')) {
-        include 'services.dsc'
-        into 'META-INF/grpc'
-    }
-}
-```
 
 ## Maven support
 
