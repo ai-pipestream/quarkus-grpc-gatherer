@@ -98,7 +98,6 @@ public class QuarkusGrpcGathererPlugin implements Plugin<Project> {
 
         TaskProvider<GatherProtosTask> gatherProtosProvider = project.getTasks().register("gatherProtos",
                 GatherProtosTask.class, task -> {
-                    task.getOutputDir().convention(project.getLayout().getBuildDirectory().dir(GATHERER_OUTPUT_SUBDIR));
                     task.getOutputDir().set(extension.getOutputDir());
 
                     task.getBufWorkspace().getRepo().set(extension.getBufWorkspace().getRepo());
