@@ -21,12 +21,20 @@ class GitCloneCacheTest {
 
     @Test
     void resolveRemoteShaShortCircuitsPinnedSha(@TempDir Path gradleUserHome) throws Exception {
-        String resolved = GitCloneCache.resolveRemoteSha(
+        String resolvedUpper = GitCloneCache.resolveRemoteSha(
                 gradleUserHome,
                 "https://example.com/repo.git",
                 "ABCDEF1234",
                 null,
                 false);
-        assertEquals("abcdef1234", resolved);
+        assertEquals("abcdef1234", resolvedUpper);
+
+        String resolvedLower = GitCloneCache.resolveRemoteSha(
+                gradleUserHome,
+                "https://example.com/repo.git",
+                "abcdef1234",
+                null,
+                false);
+        assertEquals("abcdef1234", resolvedLower);
     }
 }
