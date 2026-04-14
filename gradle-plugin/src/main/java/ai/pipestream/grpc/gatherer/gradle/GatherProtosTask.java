@@ -6,15 +6,23 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.List;
 
 import org.gradle.api.DefaultTask;
 import org.gradle.api.file.DirectoryProperty;
+import org.gradle.api.provider.Property;
+import org.gradle.api.tasks.Internal;
 import org.gradle.api.tasks.Nested;
 import org.gradle.api.tasks.OutputDirectory;
 import org.gradle.api.tasks.TaskAction;
 import org.gradle.work.DisableCachingByDefault;
+import org.eclipse.jgit.transport.CredentialsProvider;
 
+import ai.pipestream.grpc.gatherer.gradle.internal.BufWorkspaceStager;
 import ai.pipestream.grpc.gatherer.gradle.internal.FilesystemStager;
+import ai.pipestream.grpc.gatherer.gradle.internal.GitCloneCache;
+import ai.pipestream.grpc.gatherer.gradle.internal.GitCredentials;
+import ai.pipestream.grpc.gatherer.gradle.internal.GitRepoStager;
 import ai.pipestream.grpc.gatherer.gradle.internal.GoogleWktStager;
 import ai.pipestream.grpc.gatherer.gradle.internal.JarDependencyStager;
 import ai.pipestream.grpc.gatherer.gradle.internal.StagingMerger;
@@ -40,10 +48,18 @@ public abstract class GatherProtosTask extends DefaultTask {
     @OutputDirectory
     public abstract DirectoryProperty getOutputDir();
 
+    @Internal
+    public abstract DirectoryProperty getGradleUserHome();
+
+    @Internal
+    public abstract Property<Boolean> getOffline();
+
     @TaskAction
     public void gather() throws IOException {
         Path outputDir = getOutputDir().get().getAsFile().toPath();
         Path stagingRoot = getTemporaryDir().toPath().resolve("staging");
+        Path gradleUserHome = getGradleUserHome().get().getAsFile().toPath();
+        boolean offline = getOffline().getOrElse(false);
 
         deleteTree(stagingRoot);
         deleteTree(outputDir);
@@ -53,11 +69,40 @@ public abstract class GatherProtosTask extends DefaultTask {
         int filesystemCount = FilesystemStager.stage(getFilesystem(), stagingRoot);
         int jarCount = JarDependencyStager.stage(getJarDependencies(), stagingRoot.resolve("jar-dependencies"));
         int googleCount = GoogleWktStager.stage(getGoogleWkt(), stagingRoot.resolve("google"));
+        int gitCount = 0;
+        String gitRepo = getGit().getRepo().getOrNull();
+        if (gitRepo != null && !gitRepo.isBlank()) {
+            String gitRef = getGit().getRef().getOrElse("main");
+            Path gitCheckout = GitCloneCache.ensureCheckout(gradleUserHome, gitRepo, gitRef, credentialsFrom(getGit()), offline);
+            gitCount = GitRepoStager.stage(getGit(), gitCheckout, stagingRoot.resolve("git"));
+        }
+
+        int bufWorkspaceCount = 0;
+        String bufRepo = getBufWorkspace().getRepo().getOrNull();
+        if (bufRepo != null && !bufRepo.isBlank()) {
+            String bufRef = getBufWorkspace().getRef().getOrElse("main");
+            Path bufCheckout = GitCloneCache.ensureCheckout(gradleUserHome, bufRepo, bufRef,
+                    credentialsFrom(getBufWorkspace()), offline);
+            List<String> modules = getBufWorkspace().getModules().getOrElse(List.of());
+            String protoSubdir = getBufWorkspace().getProtoSubdir().getOrElse("proto");
+            bufWorkspaceCount = BufWorkspaceStager.stageWorkspace(bufCheckout, modules, protoSubdir,
+                    stagingRoot.resolve("buf-workspace"));
+        }
+
         StagingMerger.MergeResult mergeResult = StagingMerger.merge(stagingRoot, outputDir, getLogger());
 
         getLogger().lifecycle(
-                "gatherProtos: filesystem={}, jarDependencies={}, googleWktStaged={}, merged={}, conflicts={}, output={}",
-                filesystemCount, jarCount, googleCount, mergeResult.mergedCount(), mergeResult.conflictCount(), outputDir);
+                "gatherProtos: filesystem={}, jarDependencies={}, googleWktStaged={}, git={}, bufWorkspace={}, merged={}, conflicts={}, output={}",
+                filesystemCount, jarCount, googleCount, gitCount, bufWorkspaceCount,
+                mergeResult.mergedCount(), mergeResult.conflictCount(), outputDir);
+    }
+
+    private static CredentialsProvider credentialsFrom(GitSpec spec) {
+        return GitCredentials.from(spec.getToken().getOrNull(), spec.getUsername().getOrNull(), spec.getPassword().getOrNull());
+    }
+
+    private static CredentialsProvider credentialsFrom(BufWorkspaceSpec spec) {
+        return GitCredentials.from(spec.getToken().getOrNull(), spec.getUsername().getOrNull(), spec.getPassword().getOrNull());
     }
 
     private static void deleteTree(Path root) throws IOException {

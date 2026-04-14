@@ -32,4 +32,7 @@ public abstract class BufWorkspaceSpec {
 
     @Internal
     public abstract Property<String> getPassword();
+
+    @Input
+    public abstract Property<String> getResolvedHeadSha();
 }
