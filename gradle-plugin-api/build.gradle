@@ -1,0 +1,3 @@
+base {
+    archivesName = 'quarkus-grpc-gatherer-api'
+}

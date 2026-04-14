@@ -9,7 +9,6 @@ dependencies {
     implementation 'io.quarkus:quarkus-arc-deployment'
     implementation 'io.quarkiverse.grpc.zero:quarkus-grpc-zero:0.0.8'
     annotationProcessor 'io.quarkus:quarkus-extension-processor'
-    implementation 'org.eclipse.jgit:org.eclipse.jgit:7.1.0.202411261347-r'
     testImplementation 'org.junit.jupiter:junit-jupiter:5.13.4'
 }
 
