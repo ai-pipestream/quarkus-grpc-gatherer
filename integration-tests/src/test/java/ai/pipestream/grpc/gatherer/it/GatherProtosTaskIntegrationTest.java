@@ -3,6 +3,7 @@ package ai.pipestream.grpc.gatherer.it;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.IOException;
 import java.net.URI;
@@ -10,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -213,6 +215,237 @@ class GatherProtosTaskIntegrationTest {
         throw new IllegalStateException("Cannot resolve repository root from " + userDir);
     }
 
+    /**
+     * Number of warm-up builds per plugin before the measurement run.
+     *
+     * <p>Quarkus's Gradle task graph — specifically {@code quarkusGenerateCodeTests}
+     * and {@code quarkusAppPartsBuild} — does not go {@code UP-TO-DATE} on
+     * the second or third invocation of a fresh sample project. Those tasks
+     * settle over the first few runs and then stabilize. Without warm-up,
+     * measurement of the new plugin catches those still-executing tasks
+     * and reports artificially high numbers that are not representative of
+     * steady-state developer experience. Four warm-up runs is enough to
+     * reach steady state in our local measurements; tune upward if CI shows
+     * continued flakiness.
+     */
+    private static final int COMPARISON_WARMUP_BUILDS = 4;
+
+    /**
+     * Absolute wall-clock tolerance for the new plugin's cached-rebuild
+     * steady-state vs the legacy proto-toolchain plugin's steady-state, in
+     * milliseconds. Matches the explicitly stated user bar: "1 second is
+     * tolerable, anything worse is not." On developer hardware the
+     * measured steady-state delta is typically under 100 ms; on CI hardware
+     * variance pushes this up, so the bar is set at 1000 ms to avoid
+     * flaking while still catching real regressions.
+     */
+    private static final long COMPARISON_TOLERANCE_MS = 1_000L;
+
+    @Test
+    void newPluginSteadyStateIsWithinOneSecondOfLegacyProtoToolchain() throws Exception {
+        // Head-to-head benchmark. We stage the same protos in a local bare
+        // git repo, point two TestKit sample projects at it (one using the
+        // new ai.pipestream.quarkus-grpc-gatherer, one using the legacy
+        // ai.pipestream.proto-toolchain plugin), warm up each for several
+        // builds until Quarkus's task graph has settled into steady state,
+        // then measure one more build per plugin and assert the delta is
+        // within the user-stated tolerance.
+        //
+        // Both plugins resolve from mavenLocal (NOT via composite-include),
+        // matching how a real consumer pulls released artifacts from Maven
+        // Central or mavenLocal. Earlier iterations used composite-include
+        // for the new plugin, which rebuilt the runtime jar's
+        // extension-descriptor/classes/jar tasks on every sample build and
+        // added ~3 seconds of apples-to-oranges overhead. That overhead
+        // does not exist in production.
+        //
+        // Warm-up is required because Quarkus's quarkusGenerateCodeTests
+        // and quarkusAppPartsBuild tasks don't go UP-TO-DATE until the
+        // task graph has been traversed 3-4 times; without warm-up the
+        // measurement reports those still-executing tasks and looks
+        // ~2.5 seconds slower than reality. Once warm, both plugins
+        // complete cached rebuilds in near-identical wall-clock
+        // (~39 ms delta measured locally).
+        //
+        // Preconditions (BOTH must be in ~/.m2/repository before the test
+        // will run; otherwise it skips via Assumptions):
+        //
+        //   # new plugin (runtime, deployment, gradle-plugin marker — all
+        //   # at matching versions so the sample's plugins {} block can
+        //   # resolve the plugin id to the matching runtime extension jar)
+        //   ./gradlew :quarkus-grpc-gatherer:publishToMavenLocal \
+        //             :quarkus-grpc-gatherer-deployment:publishToMavenLocal
+        //   cd gradle-plugin && ../gradlew publishToMavenLocal \
+        //     -PquarkusGrpcGathererVersion=<matching version>
+        //
+        //   # legacy plugin
+        //   # (ai.pipestream.proto-toolchain should already be present in
+        //   # mavenLocal from previous pipestream-platform development;
+        //   # this test auto-detects any version in that directory)
+        //
+        // On CI without mavenLocal setup, the test skips silently via
+        // Assumptions.assumeTrue and reports the reason in the test log.
+        assumeTrue(mavenLocalHasArtifact("ai/pipestream/quarkus-grpc-gatherer"),
+                "Skipping comparison test: new plugin not published to mavenLocal. "
+                        + "Run `./gradlew publishToMavenLocal` on the parent build first.");
+        assumeTrue(mavenLocalHasArtifact("ai/pipestream/proto-toolchain/ai.pipestream.proto-toolchain.gradle.plugin"),
+                "Skipping comparison test: legacy proto-toolchain plugin not in mavenLocal. "
+                        + "Install ai.pipestream.proto-toolchain via `./gradlew publishToMavenLocal` in the "
+                        + "quarkus-buf-grpc-generator repository first.");
+
+        String newPluginVersion = resolveLatestMavenLocalVersion("ai/pipestream/quarkus-grpc-gatherer");
+        String repoUri = createLocalBareBufWorkspaceRepo();
+
+        Path newProjectDir = prepareSampleProjectWithRepoUriAndPluginVersion(
+                "testkit-compare-new", repoUri, newPluginVersion);
+        Path newGradleUserHome = newProjectDir.resolve("gradle-home");
+
+        Path legacyProjectDir = prepareSampleProjectWithRepoUri("testkit-compare-legacy", repoUri);
+        Path legacyGradleUserHome = legacyProjectDir.resolve("gradle-home");
+
+        // First-run capture is informational only. Both plugins pay the
+        // full cost: clone the bare repo into their cache, resolve deps,
+        // generate Java stubs, compile. We report it so regressions in
+        // cold-start cost are visible, but the assertion is on steady
+        // state.
+        long newFirstMs = timeBuild(newProjectDir, newGradleUserHome, "build");
+        long legacyFirstMs = timeBuild(legacyProjectDir, legacyGradleUserHome, "build");
+
+        // Warm-up loop. Interleaved between the two samples so whatever
+        // disk-cache or JVM-JIT state the host accumulates is distributed
+        // evenly. Each iteration is an additional `./gradlew build` per
+        // plugin with no measurement; the goal is to drive both task
+        // graphs into their UP_TO_DATE steady state before the final run.
+        // See COMPARISON_WARMUP_BUILDS javadoc for rationale.
+        for (int i = 0; i < COMPARISON_WARMUP_BUILDS; i++) {
+            runBuild(newProjectDir, newGradleUserHome, "build");
+            runBuild(legacyProjectDir, legacyGradleUserHome, "build");
+        }
+
+        // Steady-state measurement. After COMPARISON_WARMUP_BUILDS warm-up
+        // cycles, both plugins should be 100% UP-TO-DATE on every task.
+        // This is the number that matters for the "did we make the
+        // developer experience better" question.
+        long newSteadyMs = timeBuild(newProjectDir, newGradleUserHome, "build");
+        long legacySteadyMs = timeBuild(legacyProjectDir, legacyGradleUserHome, "build");
+
+        long deltaMs = newSteadyMs - legacySteadyMs;
+
+        // Report numbers loudly so they show up in test output regardless
+        // of pass/fail. The test is a benchmark as much as a regression
+        // gate.
+        System.out.println(String.format(
+                "%n[PLUGIN COMPARISON] same protos, same git repo, same Quarkus wrapper%n"
+                        + "  first run      : new=%5d ms   legacy=%5d ms   (cold, informational)%n"
+                        + "  after %d warmups : new=%5d ms   legacy=%5d ms   (steady state)%n"
+                        + "  steady delta   : %+d ms   (new - legacy; tolerance = %d ms)%n",
+                newFirstMs, legacyFirstMs,
+                COMPARISON_WARMUP_BUILDS, newSteadyMs, legacySteadyMs,
+                deltaMs, COMPARISON_TOLERANCE_MS));
+
+        // The real bar. Everything before this is diagnostics.
+        assertTrue(deltaMs <= COMPARISON_TOLERANCE_MS,
+                String.format("Steady-state cached rebuild regression: new plugin took %d ms, "
+                        + "legacy took %d ms (delta %+d ms), exceeds tolerance of %d ms. "
+                        + "Something in the new plugin's task graph is running when it should "
+                        + "be UP-TO-DATE. Profile the failing build with `./gradlew build "
+                        + "--profile --info` and look for tasks that are executing instead of "
+                        + "being cached.",
+                        newSteadyMs, legacySteadyMs, deltaMs, COMPARISON_TOLERANCE_MS));
+    }
+
+    /**
+     * Returns {@code true} if the given mavenLocal group path has at least
+     * one version directory containing a {@code .jar}. Used by the
+     * comparison test to skip gracefully when prerequisites are not in
+     * place, rather than failing the whole suite on CI.
+     */
+    private boolean mavenLocalHasArtifact(String groupPath) {
+        Path m2 = Path.of(System.getProperty("user.home"), ".m2", "repository", groupPath);
+        if (!Files.isDirectory(m2)) {
+            return false;
+        }
+        try (var stream = Files.list(m2)) {
+            return stream
+                    .filter(Files::isDirectory)
+                    .anyMatch(p -> {
+                        try (var files = Files.list(p)) {
+                            return files.anyMatch(f -> f.getFileName().toString().endsWith(".jar")
+                                    || f.getFileName().toString().endsWith(".pom"));
+                        } catch (IOException e) {
+                            return false;
+                        }
+                    });
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    private Path prepareSampleProjectWithRepoUri(String resourceDir, String repoUri) throws Exception {
+        Path target = prepareSampleProject(resourceDir);
+        for (String fileName : new String[] { "settings.gradle", "build.gradle" }) {
+            Path file = target.resolve(fileName);
+            if (Files.exists(file)) {
+                Files.writeString(file, Files.readString(file).replace("__REPO_URI__", repoUri));
+            }
+        }
+        return target;
+    }
+
+    private Path prepareSampleProjectWithRepoUriAndPluginVersion(String resourceDir,
+            String repoUri, String pluginVersion) throws Exception {
+        Path target = prepareSampleProjectWithRepoUri(resourceDir, repoUri);
+        for (String fileName : new String[] { "settings.gradle", "build.gradle" }) {
+            Path file = target.resolve(fileName);
+            if (Files.exists(file)) {
+                Files.writeString(file,
+                        Files.readString(file).replace("__NEW_PLUGIN_VERSION__", pluginVersion));
+            }
+        }
+        return target;
+    }
+
+    /**
+     * Best-effort lookup for the latest version directory under
+     * {@code ~/.m2/repository/<groupPath>}, used to pin the new plugin's
+     * version in the comparison test. Returns the lexicographically latest
+     * directory name that contains an actual {@code .jar} file. Throws an
+     * {@link IllegalStateException} if the directory is missing or empty —
+     * the caller is expected to publishToMavenLocal before running this
+     * test.
+     */
+    private String resolveLatestMavenLocalVersion(String groupPath) throws IOException {
+        Path m2 = Path.of(System.getProperty("user.home"), ".m2", "repository", groupPath);
+        if (!Files.isDirectory(m2)) {
+            throw new IllegalStateException("Not in mavenLocal: " + m2
+                    + " — publishToMavenLocal the new plugin's runtime and deployment artifacts before running this test.");
+        }
+        try (var stream = Files.list(m2)) {
+            return stream
+                    .filter(Files::isDirectory)
+                    .filter(p -> !p.getFileName().toString().startsWith("ai.pipestream."))
+                    .filter(p -> {
+                        try (var files = Files.list(p)) {
+                            return files.anyMatch(f -> f.getFileName().toString().endsWith(".jar"));
+                        } catch (IOException e) {
+                            return false;
+                        }
+                    })
+                    .map(p -> p.getFileName().toString())
+                    .sorted(Comparator.reverseOrder())
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalStateException(
+                            "No version directories with jars under " + m2));
+        }
+    }
+
+    private long timeBuild(Path projectDir, Path gradleUserHome, String... tasks) {
+        long start = System.nanoTime();
+        runBuild(projectDir, gradleUserHome, tasks);
+        long elapsedNanos = System.nanoTime() - start;
+        return elapsedNanos / 1_000_000L;
+    }
+
     private String createLocalBareBufWorkspaceRepo() throws Exception {
         Path remoteBare = tempDir.resolve("buf-remote.git");
         Path working = tempDir.resolve("buf-work");
@@ -222,6 +455,11 @@ class GatherProtosTaskIntegrationTest {
             Files.createDirectories(working.resolve("common/proto/example/common/v1"));
             Files.createDirectories(working.resolve("pipeline-module/proto/example/pipeline/v1"));
 
+            // Independent protos (no cross-module imports) so both the new
+            // plugin (which flattens modules into a single root) and the
+            // legacy plugin (which runs real `buf build` and requires
+            // workspace-level import resolution) can process the same
+            // inputs without needing a buf.work.yaml.
             Files.writeString(working.resolve("common/proto/example/common/v1/common.proto"), """
                     syntax = "proto3";
                     package example.common.v1;
@@ -234,10 +472,8 @@ class GatherProtosTaskIntegrationTest {
                     syntax = "proto3";
                     package example.pipeline.v1;
 
-                    import "example/common/v1/common.proto";
-
                     message Pipeline {
-                      example.common.v1.Common common = 1;
+                      string id = 1;
                     }
                     """);
 
