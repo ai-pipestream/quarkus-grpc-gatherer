@@ -1,0 +1,35 @@
+plugins {
+    id 'io.quarkus' version '3.34.3'
+    id 'ai.pipestream.proto-toolchain' version '0.7.15'
+}
+
+dependencies {
+    implementation platform('io.quarkus.platform:quarkus-bom:3.34.3')
+    implementation 'io.quarkus:quarkus-arc'
+    implementation('io.quarkus:quarkus-grpc-stubs') {
+        exclude group: 'io.quarkus', module: 'quarkus-grpc-codegen'
+    }
+}
+
+// Legacy proto-toolchain plugin handles its own code generation.
+// Disable Quarkus's built-in gRPC codegen so the two plugins do not fight
+// over the same generated-sources directory — matches the recommended
+// pattern from real-world consumers like pipestream-opensearch.
+quarkus {
+    quarkusBuildProperties.put('quarkus.grpc.codegen.enabled', 'false')
+}
+
+pipestreamProtos {
+    sourceMode = 'git-proto-workspace'
+    gitRepo = '__REPO_URI__'
+    gitRef = 'main'
+
+    modules {
+        register('common')
+        register('pipeline-module')
+    }
+}
+
+tasks.withType(Test).configureEach {
+    failOnNoDiscoveredTests = false
+}

@@ -1,0 +1,27 @@
+plugins {
+    id 'io.quarkus' version '3.34.3'
+    id 'ai.pipestream.quarkus-grpc-gatherer' version '__NEW_PLUGIN_VERSION__'
+}
+
+dependencies {
+    implementation platform('io.quarkus.platform:quarkus-bom:3.34.3')
+    implementation 'io.quarkus:quarkus-arc'
+    implementation 'ai.pipestream:quarkus-grpc-gatherer:__NEW_PLUGIN_VERSION__'
+    implementation('io.quarkus:quarkus-grpc-stubs') {
+        exclude group: 'io.quarkus', module: 'quarkus-grpc-codegen'
+    }
+    implementation 'io.quarkiverse.grpc.zero:quarkus-grpc-zero:0.0.8'
+}
+
+quarkusGrpcGather {
+    bufWorkspace {
+        repo = '__REPO_URI__'
+        ref = 'main'
+        modules = ['common', 'pipeline-module']
+        protoSubdir = 'proto'
+    }
+}
+
+tasks.withType(Test).configureEach {
+    failOnNoDiscoveredTests = false
+}
