@@ -102,9 +102,6 @@ public class QuarkusGrpcGathererPlugin implements Plugin<Project> {
         QuarkusGrpcGatherExtension extension = project.getExtensions().create("quarkusGrpcGather",
                 QuarkusGrpcGatherExtension.class);
         extension.getOutputDir().convention(project.getLayout().getBuildDirectory().dir(GATHERER_OUTPUT_SUBDIR));
-        extension.getBufWorkspace().getRef().convention("main");
-        extension.getBufWorkspace().getModules().convention(List.of());
-        extension.getBufWorkspace().getProtoSubdir().convention("proto");
         extension.getJarDependencies().getDependencies().convention(List.of());
         extension.getJarDependencies().getScanAll().convention(false);
         extension.getGit().getRef().convention("main");
@@ -119,29 +116,6 @@ public class QuarkusGrpcGathererPlugin implements Plugin<Project> {
                     task.getGradleUserHome().set(project.getLayout().dir(
                             project.provider(() -> project.getGradle().getGradleUserHomeDir())));
                     task.getOffline().set(project.provider(() -> project.getGradle().getStartParameter().isOffline()));
-
-                    task.getBufWorkspace().getRepo().set(extension.getBufWorkspace().getRepo());
-                    task.getBufWorkspace().getRef().set(extension.getBufWorkspace().getRef());
-                    task.getBufWorkspace().getModules().set(extension.getBufWorkspace().getModules());
-                    task.getBufWorkspace().getProtoSubdir().set(extension.getBufWorkspace().getProtoSubdir());
-                    task.getBufWorkspace().getToken().set(extension.getBufWorkspace().getToken());
-                    task.getBufWorkspace().getUsername().set(extension.getBufWorkspace().getUsername());
-                    task.getBufWorkspace().getPassword().set(extension.getBufWorkspace().getPassword());
-                    task.getBufWorkspace().getResolvedHeadSha().set(project.provider(() -> {
-                        String repo = extension.getBufWorkspace().getRepo().getOrNull();
-                        if (repo == null || repo.isBlank()) {
-                            return "";
-                        }
-                        String ref = extension.getBufWorkspace().getRef().getOrElse("main");
-                        boolean offline = project.getGradle().getStartParameter().isOffline();
-                        CredentialsProvider credentials = credentialsFrom(extension.getBufWorkspace());
-                        try {
-                            return GitCloneCache.resolveRemoteSha(project.getGradle().getGradleUserHomeDir().toPath(),
-                                    repo, ref, credentials, offline);
-                        } catch (IOException e) {
-                            throw new UncheckedIOException(e);
-                        }
-                    }));
 
                     task.getGit().getRepo().set(extension.getGit().getRepo());
                     task.getGit().getRef().set(extension.getGit().getRef());
@@ -205,10 +179,6 @@ public class QuarkusGrpcGathererPlugin implements Plugin<Project> {
                 "ai.pipestream.quarkus-grpc-gatherer: wired grpc-zero to read protos from "
                         + "{} and emit descriptor set as META-INF/grpc/{}",
                 protoDirectory.getOrElse("(unresolved)"), DESCRIPTOR_SET_NAME);
-    }
-
-    private static CredentialsProvider credentialsFrom(BufWorkspaceSpec spec) {
-        return GitCredentials.from(spec.getToken().getOrNull(), spec.getUsername().getOrNull(), spec.getPassword().getOrNull());
     }
 
     private static CredentialsProvider credentialsFrom(GitSpec spec) {

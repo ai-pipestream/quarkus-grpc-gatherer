@@ -5,6 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,7 +28,23 @@ public final class StagingMerger {
 
         if (Files.isDirectory(stagedRoot)) {
             try (Stream<Path> subdirs = Files.list(stagedRoot)) {
-                for (Path subdir : subdirs.filter(Files::isDirectory).toList()) {
+                // Sort subdir iteration so "first source wins" is deterministic
+                // across platforms. Files.list returns filesystem-dependent order
+                // (alphabetical on Windows NTFS, hash-indexed on Linux ext4 with
+                // dir_index, insertion order on some filesystems) which meant
+                // conflict-resolution used to be flaky: on ext4 the merge could
+                // pick the B source over A purely because readdir happened to
+                // return filesystem-1 before filesystem-0 in hash order. Sorting
+                // by file name makes the filesystem-<index> naming scheme
+                // FilesystemStager writes (and similar conventions used by the
+                // other stagers) resolve in index order, which means the first
+                // dir the user configured wins the conflict — the only intuitive
+                // outcome.
+                List<Path> orderedSubdirs = subdirs
+                        .filter(Files::isDirectory)
+                        .sorted(Comparator.comparing(p -> p.getFileName().toString()))
+                        .toList();
+                for (Path subdir : orderedSubdirs) {
                     String sourceName = subdir.getFileName().toString();
                     if ("google".equals(sourceName)) {
                         continue;

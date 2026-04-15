@@ -42,9 +42,10 @@ plugins { id 'ai.pipestream.quarkus-grpc-gatherer' version '0.2.0' }
 dependencies { implementation 'ai.pipestream:quarkus-grpc-gatherer:0.2.0' }
 
 quarkusGrpcGather {
-    bufWorkspace {
+    git {
         repo = 'https://github.com/...'
         ref = 'main'
+        subdir = 'proto'
         modules = ['common', 'pipeline-module']
     }
 }
@@ -138,7 +139,9 @@ quarkusGrpcGather {
 }
 ```
 
-### `bufWorkspace`
+### `git` in multi-module mode (replaces the old `buf-workspace` concept)
+
+The 0.1.x line had a separate `quarkus.grpc-gather.buf-workspace-*` config surface for monorepo-style git repos where each module has its own `proto/` subdir that needs to be flattened onto a shared root. In 0.2.0 this is just another mode of the same `git { }` block — set `modules` alongside `subdir` and the gatherer flattens each module's proto tree onto the shared output.
 
 **Before (0.1.x / `application.properties`)**
 
@@ -154,15 +157,17 @@ quarkus.grpc-gather.buf-workspace-token=${GH_TOKEN}
 
 ```gradle
 quarkusGrpcGather {
-    bufWorkspace {
+    git {
         repo = 'https://github.com/example/protos-workspace.git'
         ref = 'main'
+        subdir = 'proto' // per-module proto subdir in multi-module mode
         modules = ['common', 'pipeline-module']
-        protoSubdir = 'proto'
         token = providers.environmentVariable('GH_TOKEN').orNull
     }
 }
 ```
+
+Note that there is no separate `bufWorkspace { }` block in 0.2.0 — it was unified into `git { }` before the first release so the DSL has one git concept with three layout modes (single-subdir, paths-filtered, multi-module) rather than two near-identical blocks. If you are reading this migration guide while bringing a project forward from a pre-release `0.2.0-SNAPSHOT` that shipped with `bufWorkspace`, rename the block to `git { }` and rename `protoSubdir` to `subdir`.
 
 ## Important cleanup
 
@@ -230,7 +235,7 @@ If old `quarkus.grpc-gather.*` keys remain in `application.properties`, Quarkus 
 Once the migration is done, 0.2.0 gives you these for free:
 
 - **Fast repeat builds.** `gatherProtos` has declared inputs and outputs; Gradle's up-to-date check skips it when nothing changed, restoring the ~60 seconds 0.1.x had added to every `quarkusDev` start.
-- **Persistent clone cache.** Git and buf-workspace checkouts live under `$gradleUserHome/caches/grpc-gatherer/<sha1(repoUrl)>/` and are reused across builds. First build clones; subsequent builds `fetch + reset` in place instead of re-cloning into a temp directory.
+- **Persistent clone cache.** Git checkouts (single-subdir, paths-filtered, and multi-module modes) live under `$gradleUserHome/caches/grpc-gatherer/<sha1(repoUrl)>/` and are reused across builds. First build clones; subsequent builds `fetch + reset` in place instead of re-cloning into a temp directory.
 - **Upstream-movement detection.** Mutable refs (`main`, `master`, etc.) are fingerprinted via `git ls-remote` at Gradle input time, so the task reruns when upstream actually moves and skips when it doesn't. Pinned tags and commit SHAs never re-contact the network after the initial clone.
 - **`--offline` mode.** Gradle's `--offline` flag uses the cached checkout without any network calls and fails with a clear error if no cache exists yet.
 - **Transitive `quarkus-grpc-zero`.** One less line in every consumer's `build.gradle`.
