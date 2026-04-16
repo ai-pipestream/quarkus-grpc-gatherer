@@ -27,7 +27,6 @@ final class ProtoFileCopier {
             List<Path> protos = files
                     .filter(Files::isRegularFile)
                     .filter(p -> p.getFileName().toString().endsWith(".proto"))
-                    .filter(ProtoFileCopier::shouldIncludeProtoFile)
                     .toList();
             for (Path proto : protos) {
                 Path rel = root.relativize(proto);
@@ -69,12 +68,6 @@ final class ProtoFileCopier {
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .collect(Collectors.toList());
-    }
-
-    static boolean shouldIncludeProtoFile(Path p) {
-        String s = p.toString().replace('\\', '/');
-        // TODO(#9): legacy fixture-name filtering was ported verbatim from deployment; replace with explicit user-configured excludes.
-        return !s.contains("/invalids/") && !s.contains("/dir/") && !s.contains("invalid.proto");
     }
 
     static String stripProtoPrefix(String path) {

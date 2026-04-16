@@ -68,8 +68,9 @@ public final class GitRepoStager {
      * which is what flattens the modules into a shared tree.
      *
      * <p>If a module's {@code <subdir>} does not exist, the module
-     * directory itself is treated as the proto root — this matches the
-     * "flat module" fallback behavior from the legacy BufWorkspaceStager.
+     * directory itself is treated as the proto root — so modules that
+     * put their {@code .proto} files directly under the module dir still
+     * work without reconfiguration.
      */
     private static int stageFlattenedModules(Path cloneRoot, List<String> modules, String subdir, Path targetDir)
             throws IOException {

@@ -46,8 +46,9 @@ class GitRepoStagerTest {
     @Test
     void stageModulesFallsBackToModuleRootWhenSubdirMissing(@TempDir Path temp) throws Exception {
         // If a module doesn't have the configured <subdir> (e.g. "proto"),
-        // the module directory itself is treated as the proto root. This
-        // matches the legacy BufWorkspaceStager fallback behavior.
+        // the module directory itself is treated as the proto root.
+        // Supports modules that put .proto files directly under the module
+        // dir without a separate subdirectory.
         Path cloneRoot = temp.resolve("clone");
         writeProto(cloneRoot.resolve("flat-module/ai/pipestream/flat/v1/flat.proto"));
 

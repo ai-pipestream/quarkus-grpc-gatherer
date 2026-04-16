@@ -56,10 +56,6 @@ public final class JarDependencyStager {
                 if (requiredPrefix != null && !normalized.startsWith(requiredPrefix)) {
                     continue;
                 }
-                Path asPath = Path.of(normalized);
-                if (!ProtoFileCopier.shouldIncludeProtoFile(asPath)) {
-                    continue;
-                }
                 String relative = ProtoFileCopier.stripProtoPrefix(normalized);
                 Path staged = resolveSafeTarget(targetDir, relative);
                 Files.createDirectories(staged.getParent());

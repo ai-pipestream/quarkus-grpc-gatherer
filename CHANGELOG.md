@@ -4,7 +4,6 @@
 - Gather config moved from `application.properties` to Gradle DSL extension `quarkusGrpcGather { }`
 - MicroProfile Config keys `quarkus.grpc-gather.*` removed
 - Maven support temporarily dropped — Maven consumers should stay on 0.1.x
-- Single `git { }` DSL block replaces both `git { }` and `bufWorkspace { }` from earlier 0.2.0-SNAPSHOT iterations — set `modules` alongside `subdir` for multi-module (monorepo) mode instead of using a separate block. Only relevant if migrating from a pre-release snapshot; released 0.1.x had no `bufWorkspace`.
 
 ### Improvements
 - Gather step now runs as a proper Gradle task with native up-to-date checking, restoring the ~60 seconds 0.1.x added to every `quarkusDev` startup

@@ -25,7 +25,7 @@ import ai.pipestream.grpc.gatherer.gradle.internal.GoogleWktStager;
 import ai.pipestream.grpc.gatherer.gradle.internal.JarDependencyStager;
 import ai.pipestream.grpc.gatherer.gradle.internal.StagingMerger;
 
-@DisableCachingByDefault(because = "Task input model is still being implemented")
+@DisableCachingByDefault(because = "Outputs depend on host-specific filesystem paths and the per-machine git clone cache under $gradleUserHome/caches/grpc-gatherer/")
 public abstract class GatherProtosTask extends DefaultTask {
 
     @Nested
