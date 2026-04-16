@@ -108,18 +108,18 @@ class GatherProtosTaskIntegrationTest {
     }
 
     @Test
-    void bufWorkspaceFromLocalBareRepoStagesModulesAndPopulatesCache() throws Exception {
+    void gitModulesFromLocalBareRepoStagesModulesAndPopulatesCache() throws Exception {
         Path projectDir = prepareSampleProject("testkit-sample");
         Path gradleUserHome = projectDir.resolve("gradle-home");
-        String repoUri = createLocalBareBufWorkspaceRepo();
+        String repoUri = createLocalBareModuleWorkspaceRepo();
 
         String buildFile = Files.readString(projectDir.resolve("build.gradle"))
                 .replace("filesystem {\n        dirs.from(file('test-protos'))\n    }", """
-                        bufWorkspace {
+                        git {
                             repo = '%s'
                             ref = 'main'
                             modules = ['common', 'pipeline-module']
-                            protoSubdir = 'proto'
+                            subdir = 'proto'
                         }
                         """.formatted(repoUri));
         Files.writeString(projectDir.resolve("build.gradle"), buildFile);
@@ -294,7 +294,7 @@ class GatherProtosTaskIntegrationTest {
                         + "quarkus-buf-grpc-generator repository first.");
 
         String newPluginVersion = resolveLatestMavenLocalVersion("ai/pipestream/quarkus-grpc-gatherer");
-        String repoUri = createLocalBareBufWorkspaceRepo();
+        String repoUri = createLocalBareModuleWorkspaceRepo();
 
         Path newProjectDir = prepareSampleProjectWithRepoUriAndPluginVersion(
                 "testkit-compare-new", repoUri, newPluginVersion);
@@ -446,7 +446,7 @@ class GatherProtosTaskIntegrationTest {
         return elapsedNanos / 1_000_000L;
     }
 
-    private String createLocalBareBufWorkspaceRepo() throws Exception {
+    private String createLocalBareModuleWorkspaceRepo() throws Exception {
         Path remoteBare = tempDir.resolve("buf-remote.git");
         Path working = tempDir.resolve("buf-work");
 

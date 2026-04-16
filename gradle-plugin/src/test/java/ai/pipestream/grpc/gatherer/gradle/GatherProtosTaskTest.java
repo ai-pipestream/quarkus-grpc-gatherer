@@ -262,7 +262,7 @@ class GatherProtosTaskTest {
     }
 
     @Test
-    void bufWorkspaceCloneOnceThenUpToDateOnRerun() throws Exception {
+    void gitModulesCloneOnceThenUpToDateOnRerun() throws Exception {
         writeSettings();
         Path gradleUserHome = testProjectDir.resolve("gradle-home");
         GitFixture fixture = createProtoFixtureRepo();
@@ -280,11 +280,11 @@ class GatherProtosTaskTest {
 
                 quarkusGrpcGather {
                     outputDir = layout.buildDirectory.dir('buf-gathered/proto')
-                    bufWorkspace {
+                    git {
                         repo = '%s'
                         ref = 'main'
                         modules = ['common', 'pipeline-module']
-                        protoSubdir = 'proto'
+                        subdir = 'proto'
                     }
                 }
                 """.formatted(fixture.repoUri()));
@@ -301,7 +301,7 @@ class GatherProtosTaskTest {
     }
 
     @Test
-    void bufWorkspaceRerunsWhenUpstreamMoves() throws Exception {
+    void gitModulesRerunWhenUpstreamMoves() throws Exception {
         writeSettings();
         Path gradleUserHome = testProjectDir.resolve("gradle-home");
         GitFixture fixture = createProtoFixtureRepo();
@@ -319,11 +319,11 @@ class GatherProtosTaskTest {
 
                 quarkusGrpcGather {
                     outputDir = layout.buildDirectory.dir('buf-moved/proto')
-                    bufWorkspace {
+                    git {
                         repo = '%s'
                         ref = 'main'
                         modules = ['common']
-                        protoSubdir = 'proto'
+                        subdir = 'proto'
                     }
                 }
                 """.formatted(fixture.repoUri()));
@@ -358,11 +358,11 @@ class GatherProtosTaskTest {
 
                 quarkusGrpcGather {
                     outputDir = layout.buildDirectory.dir('buf-tagged/proto')
-                    bufWorkspace {
+                    git {
                         repo = '%s'
                         ref = 'v1.0.0'
                         modules = ['common']
-                        protoSubdir = 'proto'
+                        subdir = 'proto'
                     }
                 }
                 """.formatted(fixture.repoUri()));
@@ -396,11 +396,11 @@ class GatherProtosTaskTest {
 
                 quarkusGrpcGather {
                     outputDir = layout.buildDirectory.dir('buf-offline/proto')
-                    bufWorkspace {
+                    git {
                         repo = '%s'
                         ref = 'main'
                         modules = ['common']
-                        protoSubdir = 'proto'
+                        subdir = 'proto'
                     }
                 }
                 """.formatted(fixture.repoUri()));
@@ -449,11 +449,11 @@ class GatherProtosTaskTest {
 
                     quarkusGrpcGather {
                         outputDir = layout.buildDirectory.dir('gathered/proto')
-                        bufWorkspace {
+                        git {
                             repo = '%s'
                             ref = 'main'
                             modules = ['common']
-                            protoSubdir = 'proto'
+                            subdir = 'proto'
                         }
                     }
                 }

@@ -14,11 +14,11 @@ dependencies {
 }
 
 quarkusGrpcGather {
-    bufWorkspace {
+    git {
         repo = '__REPO_URI__'
         ref = 'main'
         modules = ['common', 'pipeline-module']
-        protoSubdir = 'proto'
+        subdir = 'proto'
     }
 }
 

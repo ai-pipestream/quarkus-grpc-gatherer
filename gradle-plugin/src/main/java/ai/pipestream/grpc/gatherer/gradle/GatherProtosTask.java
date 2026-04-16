@@ -6,7 +6,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.util.List;
 
 import org.gradle.api.DefaultTask;
 import org.gradle.api.file.DirectoryProperty;
@@ -18,7 +17,6 @@ import org.gradle.api.tasks.TaskAction;
 import org.gradle.work.DisableCachingByDefault;
 import org.eclipse.jgit.transport.CredentialsProvider;
 
-import ai.pipestream.grpc.gatherer.gradle.internal.BufWorkspaceStager;
 import ai.pipestream.grpc.gatherer.gradle.internal.FilesystemStager;
 import ai.pipestream.grpc.gatherer.gradle.internal.GitCloneCache;
 import ai.pipestream.grpc.gatherer.gradle.internal.GitCredentials;
@@ -29,9 +27,6 @@ import ai.pipestream.grpc.gatherer.gradle.internal.StagingMerger;
 
 @DisableCachingByDefault(because = "Task input model is still being implemented")
 public abstract class GatherProtosTask extends DefaultTask {
-
-    @Nested
-    public abstract BufWorkspaceSpec getBufWorkspace();
 
     @Nested
     public abstract FilesystemSpec getFilesystem();
@@ -69,39 +64,25 @@ public abstract class GatherProtosTask extends DefaultTask {
         int filesystemCount = FilesystemStager.stage(getFilesystem(), stagingRoot);
         int jarCount = JarDependencyStager.stage(getJarDependencies(), stagingRoot.resolve("jar-dependencies"));
         int googleCount = GoogleWktStager.stage(getGoogleWkt(), stagingRoot.resolve("google"));
+
         int gitCount = 0;
         String gitRepo = getGit().getRepo().getOrNull();
         if (gitRepo != null && !gitRepo.isBlank()) {
             String gitRef = getGit().getRef().getOrElse("main");
-            Path gitCheckout = GitCloneCache.ensureCheckout(gradleUserHome, gitRepo, gitRef, credentialsFrom(getGit()), offline);
+            Path gitCheckout = GitCloneCache.ensureCheckout(gradleUserHome, gitRepo, gitRef,
+                    credentialsFrom(getGit()), offline);
             gitCount = GitRepoStager.stage(getGit(), gitCheckout, stagingRoot.resolve("git"));
-        }
-
-        int bufWorkspaceCount = 0;
-        String bufRepo = getBufWorkspace().getRepo().getOrNull();
-        if (bufRepo != null && !bufRepo.isBlank()) {
-            String bufRef = getBufWorkspace().getRef().getOrElse("main");
-            Path bufCheckout = GitCloneCache.ensureCheckout(gradleUserHome, bufRepo, bufRef,
-                    credentialsFrom(getBufWorkspace()), offline);
-            List<String> modules = getBufWorkspace().getModules().getOrElse(List.of());
-            String protoSubdir = getBufWorkspace().getProtoSubdir().getOrElse("proto");
-            bufWorkspaceCount = BufWorkspaceStager.stageWorkspace(bufCheckout, modules, protoSubdir,
-                    stagingRoot.resolve("buf-workspace"));
         }
 
         StagingMerger.MergeResult mergeResult = StagingMerger.merge(stagingRoot, outputDir, getLogger());
 
         getLogger().lifecycle(
-                "gatherProtos: filesystem={}, jarDependencies={}, googleWktStaged={}, git={}, bufWorkspace={}, merged={}, conflicts={}, output={}",
-                filesystemCount, jarCount, googleCount, gitCount, bufWorkspaceCount,
+                "gatherProtos: filesystem={}, jarDependencies={}, googleWktStaged={}, git={}, merged={}, conflicts={}, output={}",
+                filesystemCount, jarCount, googleCount, gitCount,
                 mergeResult.mergedCount(), mergeResult.conflictCount(), outputDir);
     }
 
     private static CredentialsProvider credentialsFrom(GitSpec spec) {
-        return GitCredentials.from(spec.getToken().getOrNull(), spec.getUsername().getOrNull(), spec.getPassword().getOrNull());
-    }
-
-    private static CredentialsProvider credentialsFrom(BufWorkspaceSpec spec) {
         return GitCredentials.from(spec.getToken().getOrNull(), spec.getUsername().getOrNull(), spec.getPassword().getOrNull());
     }
 

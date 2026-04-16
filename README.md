@@ -59,11 +59,12 @@ quarkusGrpcGather {
         token = providers.environmentVariable('GH_TOKEN').orNull
     }
 
-    bufWorkspace {
+    git {
+        // Multi-module mode: each <module>/<subdir> is flattened onto the shared proto root.
         repo = 'https://github.com/example/protos-workspace.git'
         ref = providers.gradleProperty('workspaceRef').orElse('main').get()
+        subdir = 'proto'
         modules = ['common', 'pipeline-module']
-        protoSubdir = 'proto'
         token = providers.environmentVariable('GH_TOKEN').orNull
     }
 }
@@ -106,7 +107,11 @@ quarkusGrpcGather {
 
 Well-known types are staged for imports but are not merged into the final output tree.
 
-### `git` — single-repo layout
+### `git` — single-repo and multi-module layouts
+
+One `git { }` block handles three layout modes, selected by which properties are set. They are mutually exclusive and evaluated in priority order: `modules` → `paths` → single subdir.
+
+**Single-subdir mode** — one repo, one proto tree under `<subdir>` (default `proto`):
 
 ```gradle
 quarkusGrpcGather {
@@ -114,8 +119,6 @@ quarkusGrpcGather {
         repo = 'https://github.com/example/schemas.git'
         ref = 'main' // default: main
         subdir = 'proto' // default: proto
-        paths = ['common.proto', 'pipeline/'] // optional filters under subdir
-        modules = ['common', 'pipeline'] // optional module dirs, overrides paths
         token = providers.environmentVariable('GH_TOKEN').orNull
         username = providers.environmentVariable('GIT_USERNAME').orNull
         password = providers.environmentVariable('GIT_PASSWORD').orNull
@@ -123,23 +126,33 @@ quarkusGrpcGather {
 }
 ```
 
-### `bufWorkspace` — buf-style multi-module repository
+**Explicit paths mode** — filter to a specific set of files or directories under `<subdir>`:
 
 ```gradle
 quarkusGrpcGather {
-    bufWorkspace {
-        repo = 'https://github.com/example/protos-workspace.git'
-        ref = 'main'
-        modules = ['common', 'pipeline-module']
-        protoSubdir = 'proto' // default: proto
-        token = providers.environmentVariable('GH_TOKEN').orNull
-        username = providers.environmentVariable('GIT_USERNAME').orNull
-        password = providers.environmentVariable('GIT_PASSWORD').orNull
+    git {
+        repo = 'https://github.com/example/schemas.git'
+        subdir = 'proto'
+        paths = ['common.proto', 'pipeline/'] // relative to subdir
     }
 }
 ```
 
-Each configured module contributes `<module>/<protoSubdir>/**.proto` into the shared gathered tree.
+**Multi-module mode** — a monorepo where each named top-level module has its own `<subdir>` proto root, and the per-module trees are flattened onto a single shared root so cross-module imports resolve:
+
+```gradle
+quarkusGrpcGather {
+    git {
+        repo = 'https://github.com/example/protos-workspace.git'
+        ref = 'main'
+        subdir = 'proto'
+        modules = ['common', 'pipeline-module']
+        token = providers.environmentVariable('GH_TOKEN').orNull
+    }
+}
+```
+
+In multi-module mode, `subdir` is interpreted per-module (`<module>/<subdir>` is each module's proto source root), and files from every module are flattened into the shared output. If a module has no `<subdir>`, the module directory itself is used as the proto root. This is the monorepo pattern used by projects with shared proto packages like `import "common/v1/core.proto"`.
 
 ## Configuration reference
 

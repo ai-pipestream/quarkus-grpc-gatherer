@@ -9,13 +9,6 @@ public abstract class QuarkusGrpcGatherExtension {
     public abstract DirectoryProperty getOutputDir();
 
     @Nested
-    public abstract BufWorkspaceSpec getBufWorkspace();
-
-    public void bufWorkspace(Action<? super BufWorkspaceSpec> action) {
-        action.execute(getBufWorkspace());
-    }
-
-    @Nested
     public abstract FilesystemSpec getFilesystem();
 
     public void filesystem(Action<? super FilesystemSpec> action) {
