@@ -1,0 +1,34 @@
+version: 2
+
+updates:
+  # GitHub Actions (ci.yml, release.yml)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # Gradle: root multi-module build (runtime, deployment, integration-tests, api).
+  # All dependencies grouped into a single weekly PR.
+  - package-ecosystem: "gradle"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      gradle-dependencies:
+        patterns:
+          - "*"
+
+  # Gradle: the gradle-plugin is a separate composite (pluginManagement.includeBuild),
+  # so Dependabot does not reach it from "/" — it needs its own entry.
+  - package-ecosystem: "gradle"
+    directory: "/gradle-plugin"
+    schedule:
+      interval: "weekly"
+    groups:
+      gradle-plugin-dependencies:
+        patterns:
+          - "*"
