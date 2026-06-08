@@ -3,11 +3,11 @@ base {
 }
 
 dependencies {
-    implementation platform('io.quarkus.platform:quarkus-bom:3.34.3')
+    implementation platform('io.quarkus.platform:quarkus-bom:3.36.1')
     implementation project(':quarkus-grpc-gatherer')
     implementation 'io.quarkus:quarkus-core-deployment'
     implementation 'io.quarkus:quarkus-arc-deployment'
-    implementation 'io.quarkiverse.grpc.zero:quarkus-grpc-zero:0.0.8'
+    implementation 'io.quarkiverse.grpc.zero:quarkus-grpc-zero:0.0.10'
     annotationProcessor 'io.quarkus:quarkus-extension-processor'
     testImplementation 'org.junit.jupiter:junit-jupiter:5.13.4'
 }

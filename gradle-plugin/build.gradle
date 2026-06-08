@@ -39,8 +39,8 @@ dependencies {
     // to set quarkusBuildProperties. Declared compileOnly so consumers of
     // this plugin do not double-load the Quarkus Gradle plugin - the
     // consumer's io.quarkus plugin application provides it at runtime.
-    compileOnly 'io.quarkus:gradle-application-plugin:3.34.3'
-    testRuntimeOnly 'io.quarkus:gradle-application-plugin:3.34.3'
+    compileOnly 'io.quarkus:gradle-application-plugin:3.36.1'
+    testRuntimeOnly 'io.quarkus:gradle-application-plugin:3.36.1'
 
     testImplementation gradleTestKit()
     testImplementation 'org.junit.jupiter:junit-jupiter:5.13.4'
@@ -56,7 +56,7 @@ configurations {
 }
 
 dependencies {
-    testPluginClasspath 'io.quarkus:gradle-application-plugin:3.34.3'
+    testPluginClasspath 'io.quarkus:gradle-application-plugin:3.36.1'
 }
 
 tasks.named('pluginUnderTestMetadata').configure {
