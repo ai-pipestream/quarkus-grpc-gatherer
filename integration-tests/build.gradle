@@ -14,8 +14,8 @@ dependencies {
     implementation 'io.quarkiverse.grpc.zero:quarkus-grpc-zero:0.0.10'
 
     testImplementation gradleTestKit()
-    testImplementation 'org.eclipse.jgit:org.eclipse.jgit:7.1.0.202411261347-r'
-    testImplementation 'org.junit.jupiter:junit-jupiter:5.13.4'
+    testImplementation 'org.eclipse.jgit:org.eclipse.jgit:7.6.0.202603022253-r'
+    testImplementation 'org.junit.jupiter:junit-jupiter:6.1.0'
     testImplementation 'io.quarkus:quarkus-junit5'
 }
 
