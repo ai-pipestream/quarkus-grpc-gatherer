@@ -52,6 +52,13 @@ public class GrpcGathererProcessor {
     private static final String CLASSPATH_LOCATION = "META-INF/grpc/services.dsc";
 
     /**
+     * Default constructor. Quarkus instantiates this processor reflectively to
+     * invoke its {@link BuildStep} methods; there is no other state to set up.
+     */
+    public GrpcGathererProcessor() {
+    }
+
+    /**
      * Registers the "grpc-gatherer" feature in Quarkus.
      *
      * @return the feature build item
