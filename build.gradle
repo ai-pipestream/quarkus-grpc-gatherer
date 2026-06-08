@@ -10,8 +10,8 @@ plugins {
     id 'base'
     id 'maven-publish'
     id 'signing'
-    id 'pl.allegro.tech.build.axion-release' version '1.21.1'
-    id 'com.gradleup.nmcp.aggregation' version '1.4.4'
+    id 'pl.allegro.tech.build.axion-release' version '1.21.2'
+    id 'com.gradleup.nmcp.aggregation' version '1.5.0'
     id 'io.quarkus.extension' version '3.36.1' apply false
     id 'io.quarkus' version '3.36.1' apply false
 }
